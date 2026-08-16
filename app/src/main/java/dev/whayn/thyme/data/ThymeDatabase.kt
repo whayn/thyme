@@ -6,7 +6,11 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
 
-@Database(entities = [Dose::class], version = 1)
+@Database(
+    entities = [Medication::class, ScheduledDose::class, DoseLog::class],
+    version = 2,
+    exportSchema = false
+)
 @TypeConverters(Converters::class)
 abstract class ThymeDatabase : RoomDatabase() {
 
@@ -22,7 +26,10 @@ abstract class ThymeDatabase : RoomDatabase() {
                     context.applicationContext,
                     ThymeDatabase::class.java,
                     "thyme.db"
-                ).build().also { instance = it }
+                )
+                    .fallbackToDestructiveMigration(dropAllTables = true) // to drop before prod
+                    .build()
+                    .also { instance = it }
             }
     }
 }
