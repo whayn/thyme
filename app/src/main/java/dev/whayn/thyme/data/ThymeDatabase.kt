@@ -7,8 +7,8 @@ import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
 
 @Database(
-    entities = [Medication::class, ScheduledDose::class, DoseLog::class],
-    version = 2,
+    entities = [Medication::class, Regimen::class, ScheduledDose::class, DoseLog::class],
+    version = 4,
     exportSchema = false
 )
 @TypeConverters(Converters::class)

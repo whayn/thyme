@@ -6,22 +6,28 @@ import androidx.room.Index
 import androidx.room.PrimaryKey
 import java.time.LocalTime
 
+/**
+ * One time of day within a [Regimen]. Whether it applies on a given date is
+ * decided entirely by its regimen's window and recurrence.
+ */
 @Entity(
     tableName = "scheduled_doses",
     foreignKeys = [
         ForeignKey(
-            entity = Medication::class,
+            entity = Regimen::class,
             parentColumns = ["id"],
-            childColumns = ["medicationId"],
+            childColumns = ["regimenId"],
             onDelete = ForeignKey.CASCADE
         )
     ],
-    indices = [Index("medicationId")]
+    indices = [Index("regimenId")]
 )
 data class ScheduledDose(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val medicationId: Long,
+    val regimenId: Long,
     val time: LocalTime,
     val quantity: Double = 1.0, // Quantity is the amount of pills taken in one dose
+    // Soft delete: dose_logs cascade off this row, so removing a time from a
+    // regimen deactivates it rather than deleting the history attached to it.
     val active: Boolean = true,
 )
