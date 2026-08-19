@@ -13,7 +13,7 @@ import androidx.compose.ui.unit.sp
  * below is built from that one idea.
  *
  * Still the platform font. Swapping in a real typeface later means changing
- * only `Display` and `Body` — every style already routes through them.
+ * only `Display` and `Body`, since every style already routes through them.
  */
 private val Display = FontFamily.Default
 private val Body = FontFamily.Default
@@ -53,7 +53,7 @@ val ThymeTypography = Typography(
         fontSize = 20.sp, lineHeight = 26.sp, letterSpacing = 0.sp,
     ),
 
-    // Medication names live here — the most-read text in the app.
+    // Medication names live here: the most-read text in the app.
     titleLarge = TextStyle(
         fontFamily = Body, fontWeight = FontWeight.Medium,
         fontSize = 19.sp, lineHeight = 25.sp, letterSpacing = (-0.1).sp,

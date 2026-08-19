@@ -11,8 +11,8 @@ import java.time.LocalDate
  *
  * A [Medication] is the drug; a Regimen is one course of it; its
  * [ScheduledDose]s are the times within that course. Splitting them this way
- * lets the same drug carry two concurrent courses — a taper, say, 20mg for a
- * week and then 10mg ongoing — and means changing a rule touches one row
+ * lets the same drug carry two concurrent courses a taper, say, 20mg for a
+ * week and then 10mg ongoing and means changing a rule touches one row
  * rather than every time of day.
  *
  * The four recurrence fields compose with plain AND, so there is no

@@ -13,13 +13,13 @@ import androidx.compose.ui.graphics.Color
 val Forest10 = Color(0xFF04210F)
 val Forest20 = Color(0xFF0D3A1F)
 val Forest30 = Color(0xFF17512D)
-val Forest40 = Color(0xFF22693C) // light-mode accent — true forest green
+val Forest40 = Color(0xFF22693C) // light-mode accent true forest green
 val Forest50 = Color(0xFF2F844E)
 val Forest70 = Color(0xFF5FB57C)
 val Forest80 = Color(0xFF7ECD95) // dark-mode accent
 val Forest90 = Color(0xFFA6E8B8)
 
-// Dark surfaces — green-black, wet soil at night.
+// Dark surfaces  green-black, wet soil at night.
 val Ink = Color(0xFF0D1411)
 val InkDeep = Color(0xFF080E0B)
 val Bed = Color(0xFF151E19)
@@ -27,21 +27,29 @@ val BedHigh = Color(0xFF1C2721)
 val BedHighest = Color(0xFF232F29)
 val Stem = Color(0xFF2A3A31)
 val StemLit = Color(0xFF41584A)
-val Bracken = Color(0xFF5A7263) // outline — must read as a tap affordance
+val Bracken = Color(0xFF5A7263) // outline  must read as a tap affordance
 val Chalk = Color(0xFFE6EDE4)
 val Moss = Color(0xFF8DA087)
 val Rust = Color(0xFFE59684)
 
-// Light surfaces — warm paper with a green cast.
-val Paper = Color(0xFFF2F6EE)
-val PaperBed = Color(0xFFFFFFFF)
-val PaperHigh = Color(0xFFE9F0E4)
-val PaperHighest = Color(0xFFE0E9DB)
+// Light surfaces  warm paper with a green cast.
+//
+// A strictly monotonic ramp: the page is the lightest thing, and each container
+// level steps *darker* so raising a surface raises its emphasis. That is the
+// M3 convention, and it is what makes "taken" (low) recede while "untaken"
+// (container) reads as a raised card. An earlier ramp had `container` and
+// `containerLowest` both at pure white with `containerLow` darker between them,
+// which inverted the pair and left taken cards two percent off the background.
+val Paper = Color(0xFFF7FAF4)
+val PaperLow = Color(0xFFF2F6EE)
+val PaperBed = Color(0xFFEDF2E8)
+val PaperHigh = Color(0xFFE6EDE0)
+val PaperHighest = Color(0xFFDEE7D8)
 val BarkDark = Color(0xFF18231D)
 val Slate = Color(0xFF4A5A4E)
 val Hedge = Color(0xFF72846D)
 
-// "Due" — warm attention, deliberately never red. Missing a dose is not a failure.
+// "Due"  warm attention, deliberately never red. Missing a dose is not a failure.
 val Honey = Color(0xFFE0B368)
 val HoneyDeep = Color(0xFF483819)
 val HoneyDark = Color(0xFF7A5514)
@@ -56,29 +64,45 @@ val FlowerLight = Color(0xFFF7D8EE)
 /*
  * Medication colours. Stored on Medication as an *index*, not an ARGB value, so
  * one saved choice can render as a light tone on ink and a deep tone on paper.
- * Index 0 is the default and matches the app accent.
+ * Order matches Samsung Health palette: white, grey, yellow, beige, pink, lime,
+ * green, teal, blue, purple, red, orange.
  */
 // Deliberately no honey here: honey means "due", and a medication wearing it
 // would be indistinguishable from an overdue one at a glance.
 val MedicationColorsDark = listOf(
-    Forest80,
-    Color(0xFF8FC4D4), // sky
-    Color(0xFFC7A6BE), // lilac
-    Color(0xFFE0A183), // clay
-    Color(0xFFB39BD0), // plum
-    Color(0xFFE39BAE), // rose
+    Color(0xFFFFFFFF), // white
+    Color(0xFFB0B3B8), // grey
+    Color(0xFFF5D166), // yellow
+    Color(0xFFE8B89B), // beige
+    Color(0xFFF4A7B9), // pink
+    Color(0xFFB8E362), // lime
+    Color(0xFF68C97B), // green
+    Color(0xFF68D4D6), // teal
+    Color(0xFF708FF0), // blue
+    Color(0xFFAC8CE8), // purple
+    Color(0xFFF06C62), // red
+    Color(0xFFED8537), // orange
 )
 
 val MedicationColorsLight = listOf(
-    Forest40,
-    Color(0xFF2F6577), // sky
-    Color(0xFF6E5169), // lilac
-    Color(0xFF8C4E33), // clay
-    Color(0xFF5B4A82), // plum
-    Color(0xFF8C3F55), // rose
+    Color(0xFF8C918C), // white (muted outline/tone for visibility on light paper)
+    Color(0xFF6B7280), // grey
+    Color(0xFFD97706), // yellow
+    Color(0xFFB45309), // beige
+    Color(0xFFDB2777), // pink
+    Color(0xFF65A30D), // lime
+    Color(0xFF16A34A), // green
+    Color(0xFF0D9488), // teal
+    Color(0xFF2563EB), // blue
+    Color(0xFF7C3AED), // purple
+    Color(0xFFDC2626), // red
+    Color(0xFFEA580C), // orange
 )
 
-val MedicationColorNames = listOf("Forest", "Sky", "Lilac", "Clay", "Plum", "Rose")
+val MedicationColorNames = listOf(
+    "White", "Grey", "Yellow", "Beige", "Pink", "Lime",
+    "Green", "Teal", "Blue", "Purple", "Red", "Orange",
+)
 
 val ThymeDarkScheme = darkColorScheme(
     primary = Forest80,
@@ -150,7 +174,7 @@ val ThymeLightScheme = lightColorScheme(
     surfaceTint = Forest40,
 
     surfaceContainerLowest = Color(0xFFFFFFFF),
-    surfaceContainerLow = Color(0xFFF8FBF5),
+    surfaceContainerLow = PaperLow,
     surfaceContainer = PaperBed,
     surfaceContainerHigh = PaperHigh,
     surfaceContainerHighest = PaperHighest,

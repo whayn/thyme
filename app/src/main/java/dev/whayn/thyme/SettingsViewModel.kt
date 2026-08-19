@@ -5,7 +5,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import dev.whayn.thyme.data.DevSeeder
+import dev.whayn.thyme.data.DoseDao
 import dev.whayn.thyme.data.SettingsRepository
+import dev.whayn.thyme.data.ThymeDatabase
 import dev.whayn.thyme.data.ThymeSettings
 import dev.whayn.thyme.data.ThymeThemeMode
 import kotlinx.coroutines.flow.SharingStarted
@@ -13,7 +16,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
-class SettingsViewModel(private val repository: SettingsRepository) : ViewModel() {
+class SettingsViewModel(
+    private val repository: SettingsRepository,
+    private val dao: DoseDao,
+) : ViewModel() {
 
     val settings: StateFlow<ThymeSettings> = repository.settings
         .stateIn(
@@ -30,9 +36,23 @@ class SettingsViewModel(private val repository: SettingsRepository) : ViewModel(
         viewModelScope.launch { repository.setDynamicColor(enabled) }
     }
 
+    /** Debug-only: wipes real data and replaces it with fixtures for trying out Stats. */
+    fun seedFakeData() {
+        viewModelScope.launch {
+            dao.clearAllData()
+            DevSeeder.seed(dao)
+        }
+    }
+
+    fun clearAllData() {
+        viewModelScope.launch { dao.clearAllData() }
+    }
+
     companion object {
         fun factory(context: Context) = viewModelFactory {
-            initializer { SettingsViewModel(SettingsRepository.get(context)) }
+            initializer {
+                SettingsViewModel(SettingsRepository.get(context), ThymeDatabase.get(context).doseDao())
+            }
         }
     }
 }

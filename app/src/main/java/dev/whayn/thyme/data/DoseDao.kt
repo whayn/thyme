@@ -28,6 +28,8 @@ interface DoseDao {
                m.name AS medicationName,
                m.strength AS strength,
                m.colorIndex AS colorIndex,
+               m.colorIndexRight AS colorIndexRight,
+               m.form AS form,
                l.id AS logId,
                l.takenAt AS takenAt
         FROM scheduled_doses AS s
@@ -56,6 +58,9 @@ interface DoseDao {
     @Insert
     suspend fun insertLog(log: DoseLog)
 
+    @Insert
+    suspend fun insertLogs(logs: List<DoseLog>)
+
     @Query("DELETE FROM dose_logs WHERE scheduledDoseId = :scheduledDoseId AND forDate = :date")
     suspend fun deleteLog(scheduledDoseId: Long, date: LocalDate)
 
@@ -64,6 +69,10 @@ interface DoseDao {
     @Transaction
     @Query("SELECT * FROM medications WHERE active = 1 ORDER BY name COLLATE NOCASE")
     fun observeMedications(): Flow<List<MedicationWithRegimens>>
+
+    @Transaction
+    @Query("SELECT * FROM medications WHERE id = :id")
+    fun observeMedication(id: Long): Flow<MedicationWithRegimens?>
 
     @Transaction
     @Query("SELECT * FROM medications WHERE id = :id")
@@ -81,12 +90,20 @@ interface DoseDao {
     )
     suspend fun stopMedication(medicationId: Long, today: LocalDate)
 
+    /** Stops one course the same way [stopMedication] does: end date, history intact. */
+    @Query("UPDATE regimens SET endDate = :today WHERE id = :id AND (endDate IS NULL OR endDate > :today)")
+    suspend fun stopRegimen(id: Long, today: LocalDate)
+
     /**
-     * Soft delete — for "I typed this wrong", where losing the history is the
+     * Soft delete for "I typed this wrong", where losing the history is the
      * point. Never a hard delete: dose_logs cascade off scheduled_doses.
      */
     @Query("UPDATE medications SET active = 0 WHERE id = :id")
     suspend fun deleteMedication(id: Long)
+
+    /** Removes one course entirely, history included, by deactivating its regimen. */
+    @Query("UPDATE regimens SET active = 0 WHERE id = :id")
+    suspend fun deleteRegimen(id: Long)
 
     // ── Writes used by the editor ────────────────────────────────────────────
 
@@ -105,15 +122,38 @@ interface DoseDao {
     @Insert
     suspend fun insertScheduledDoses(doses: List<ScheduledDose>)
 
+    @Insert
+    suspend fun insertScheduledDose(dose: ScheduledDose): Long
+
     @Update
     suspend fun updateScheduledDose(dose: ScheduledDose)
 
     @Query("SELECT * FROM scheduled_doses WHERE regimenId = :regimenId")
     suspend fun dosesForRegimen(regimenId: Long): List<ScheduledDose>
 
+    @Query("DELETE FROM dose_logs")
+    suspend fun clearDoseLogs()
+
+    @Query("DELETE FROM scheduled_doses")
+    suspend fun clearScheduledDoses()
+
+    @Query("DELETE FROM regimens")
+    suspend fun clearRegimens()
+
+    @Query("DELETE FROM medications")
+    suspend fun clearMedications()
+
+    @Transaction
+    suspend fun clearAllData() {
+        clearDoseLogs()
+        clearScheduledDoses()
+        clearRegimens()
+        clearMedications()
+    }
+
     /**
-     * Creates or updates a medication, its single regimen, and its times, in one
-     * transaction so a crash can never leave a medication with no schedule.
+     * Creates or updates a single regimen and its times in one transaction, so a
+     * crash can never leave a course with no schedule.
      *
      * Times are *reconciled by row id*, not replaced: an edited row keeps its
      * identity and therefore the dose_logs attached to it, so changing 08:00 to
@@ -125,19 +165,10 @@ interface DoseDao {
      * normal history-preserving operation remains correct.
      */
     @Transaction
-    suspend fun saveMedication(
-        medication: Medication,
-        regimen: Regimen,
-        times: List<DoseTime>,
-    ): Long {
-        val medicationId =
-            if (medication.id == 0L) insertMedication(medication)
-            else medication.id.also { updateMedication(medication) }
-
-        val withMedication = regimen.copy(medicationId = medicationId)
+    suspend fun saveRegimen(regimen: Regimen, times: List<DoseTime>): Long {
         val regimenId =
-            if (withMedication.id == 0L) insertRegimen(withMedication)
-            else withMedication.id.also { updateRegimen(withMedication) }
+            if (regimen.id == 0L) insertRegimen(regimen)
+            else regimen.id.also { updateRegimen(regimen) }
 
         val existing = dosesForRegimen(regimenId)
         val wanted = times.filter { it.id != 0L }.associateBy { it.id }
@@ -160,6 +191,6 @@ interface DoseDao {
             .map { ScheduledDose(regimenId = regimenId, time = it.time, quantity = it.quantity) }
         if (toInsert.isNotEmpty()) insertScheduledDoses(toInsert)
 
-        return medicationId
+        return regimenId
     }
 }

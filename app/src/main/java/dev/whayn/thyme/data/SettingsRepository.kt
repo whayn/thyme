@@ -15,7 +15,7 @@ import java.io.IOException
 
 /**
  * Which colours the app runs in. Lives in `data` rather than `ui.theme`
- * because it is persisted preference data — dependencies point UI → data, never
+ * because it is persisted preference data dependencies point UI → data, never
  * the other way.
  */
 enum class ThymeThemeMode { System, Light, Dark }

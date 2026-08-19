@@ -16,8 +16,8 @@ import java.util.Locale
 object Recurrence {
 
     const val EVERY_DAY = 0b111_1111   // 127
-    const val WEEKDAYS = 0b001_1111    // Mon–Fri
-    const val WEEKENDS = 0b110_0000    // Sat–Sun
+    const val WEEKDAYS = 0b001_1111    // Mon-Fri
+    const val WEEKENDS = 0b110_0000    // Sat-Sun
 
     private val summaryDateFormat = DateTimeFormatter.ofPattern("d MMM")
 

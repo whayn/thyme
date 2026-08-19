@@ -4,12 +4,9 @@ import android.text.format.DateFormat
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -19,19 +16,20 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -41,9 +39,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TimePicker
@@ -61,21 +57,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import dev.whayn.thyme.CourseEditorState
+import dev.whayn.thyme.CourseEditorViewModel
 import dev.whayn.thyme.EditableDose
-import dev.whayn.thyme.MedicationEditorState
-import dev.whayn.thyme.MedicationEditorViewModel
 import dev.whayn.thyme.RecurrenceChoice
 import dev.whayn.thyme.data.Recurrence
 import dev.whayn.thyme.data.Regimen
-import dev.whayn.thyme.ui.theme.MedicationColorNames
-import dev.whayn.thyme.ui.theme.ThymeTheme
+import dev.whayn.thyme.ui.theme.ThymeDimens
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
@@ -90,33 +82,34 @@ private val dayShape = RoundedCornerShape(12.dp)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MedicationEditorScreen(
-    medicationId: Long?,
+fun CourseEditorScreen(
+    medicationId: Long,
     regimenId: Long?,
     onSaved: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current.applicationContext
-    val viewModel: MedicationEditorViewModel = viewModel(
-        key = "medication-editor-${medicationId ?: "new"}-${regimenId ?: "new"}",
-        factory = MedicationEditorViewModel.factory(context, medicationId, regimenId),
+    val viewModel: CourseEditorViewModel = viewModel(
+        key = "course-editor-$medicationId-${regimenId ?: "new"}",
+        factory = CourseEditorViewModel.factory(context, medicationId, regimenId),
     )
     val state by viewModel.state.collectAsStateWithLifecycle()
     var showTimePickerFor by remember { mutableStateOf<Int?>(null) }
     var dateTarget by remember { mutableStateOf<DateTarget?>(null) }
     var showDiscardDialog by remember { mutableStateOf(false) }
+    var showDeleteDialog by remember { mutableStateOf(false) }
 
-    if (state.loading || state.medication == null) {
+    if (state.loading) {
         Column(
             modifier = modifier.fillMaxSize(),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
-        ) { Text("Loading medication...") }
+        ) { Text("Loading course...") }
         return
     }
 
-    val medication = state.medication ?: return
+    val isEditing = regimenId != null
     fun requestBack() {
         if (state.dirty) showDiscardDialog = true else onBack()
     }
@@ -124,17 +117,27 @@ fun MedicationEditorScreen(
     BackHandler(onBack = ::requestBack)
 
     if (showDiscardDialog) {
+        DiscardChangesDialog(
+            onDiscard = { showDiscardDialog = false; onBack() },
+            onKeepEditing = { showDiscardDialog = false },
+        )
+    }
+
+    if (showDeleteDialog) {
         AlertDialog(
-            onDismissRequest = { showDiscardDialog = false },
-            title = { Text("Leave without saving?") },
-            text = { Text("Your changes will be lost.") },
+            onDismissRequest = { showDeleteDialog = false },
+            title = { Text("Delete course?") },
+            text = { Text("This removes it from every date, including its history.") },
             confirmButton = {
-                TextButton(onClick = { showDiscardDialog = false; onBack() }) {
-                    Text("Discard changes")
-                }
+                TextButton(
+                    onClick = { showDeleteDialog = false; viewModel.delete(onBack) },
+                    colors = ButtonDefaults.textButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error,
+                    ),
+                ) { Text("Delete") }
             },
             dismissButton = {
-                TextButton(onClick = { showDiscardDialog = false }) { Text("Keep editing") }
+                TextButton(onClick = { showDeleteDialog = false }) { Text("Cancel") }
             },
         )
     }
@@ -182,15 +185,7 @@ fun MedicationEditorScreen(
         modifier = modifier.fillMaxSize(),
         topBar = {
             TopAppBar(
-                title = {
-                    Text(
-                        when {
-                            medicationId == null -> "Add medication"
-                            regimenId == null -> "Add course"
-                            else -> "Edit course"
-                        }
-                    )
-                },
+                title = { Text(if (isEditing) "Edit course" else "Add course") },
                 navigationIcon = {
                     IconButton(onClick = ::requestBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -199,26 +194,15 @@ fun MedicationEditorScreen(
             )
         },
         bottomBar = {
-            Surface(
-                color = MaterialTheme.colorScheme.surface,
-                tonalElevation = 3.dp,
-                shadowElevation = 4.dp,
-            ) {
-                Button(
-                    onClick = { viewModel.save(onSaved) },
+            // Just the one action. Two extra text buttons under the primary
+            // button made the bar look like three competing calls to action,
+            // with the destructive pair given the same weight as saving.
+            EditorBottomBar {
+                EditorPrimaryButton(
+                    text = if (isEditing) "Save changes" else "Add course",
                     enabled = state.canSave,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 20.dp, vertical = 12.dp),
-                ) {
-                    Text(
-                        when {
-                            medicationId == null -> "Add medication"
-                            regimenId == null -> "Add course"
-                            else -> "Save changes"
-                        }
-                    )
-                }
+                    onClick = { viewModel.save(onSaved) },
+                )
             }
         },
     ) { scaffoldPadding ->
@@ -227,40 +211,9 @@ fun MedicationEditorScreen(
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
                 .padding(scaffoldPadding)
-                .padding(horizontal = 20.dp, vertical = 20.dp),
+                .padding(horizontal = ThymeDimens.PageGutter, vertical = 20.dp),
         ) {
-            EditorSectionLabel("MEDICATION")
-            Spacer(Modifier.height(10.dp))
-            OutlinedTextField(
-                value = medication.name,
-                onValueChange = { viewModel.setMedication(medication.copy(name = it)) },
-                label = { Text("Name") },
-                placeholder = { Text("Paracetamol") },
-                singleLine = true,
-                colors = fieldColors(),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(10.dp))
-            OutlinedTextField(
-                value = medication.strength.orEmpty(),
-                onValueChange = { viewModel.setMedication(medication.copy(strength = it)) },
-                label = { Text("Strength") },
-                placeholder = { Text("50mg") },
-                singleLine = true,
-                colors = fieldColors(),
-                modifier = Modifier.fillMaxWidth(),
-            )
-
-            Spacer(Modifier.height(20.dp))
-            EditorSectionLabel("COLOUR")
-            Spacer(Modifier.height(8.dp))
-            ColorPicker(
-                selected = medication.colorIndex,
-                onSelect = { viewModel.setMedication(medication.copy(colorIndex = it)) },
-            )
-
-            Spacer(Modifier.height(24.dp))
-            EditorSectionLabel("TIMES")
+            SectionEyebrow("Times")
             Spacer(Modifier.height(8.dp))
             state.times.forEachIndexed { index, dose ->
                 DoseTimeRow(
@@ -292,25 +245,28 @@ fun MedicationEditorScreen(
             }
             ValidationHint(state)
 
-            Spacer(Modifier.height(20.dp))
-            EditorSectionLabel("RECURRENCE")
+            Spacer(Modifier.height(24.dp))
+            SectionEyebrow("Recurrence")
             Spacer(Modifier.height(8.dp))
             RecurrenceControls(state, viewModel::setChoice, viewModel::setRegimen)
 
-            Spacer(Modifier.height(22.dp))
-            EditorSectionLabel("DATES")
+            Spacer(Modifier.height(24.dp))
+            SectionEyebrow("Dates")
             Spacer(Modifier.height(8.dp))
-            DateButton(
+            PickerField(
                 label = "Starts",
                 value = state.regimen.startDate.format(editorDateFormatter),
+                icon = Icons.Filled.CalendarMonth,
                 onClick = {
                     dateTarget = DateTarget(DateTargetKind.Start, state.regimen.startDate)
                 },
+                modifier = Modifier.fillMaxWidth(),
             )
-            Spacer(Modifier.height(8.dp))
-            DateButton(
+            Spacer(Modifier.height(10.dp))
+            PickerField(
                 label = "Ends",
                 value = state.regimen.endDate?.format(editorDateFormatter) ?: "No end date",
+                icon = Icons.Filled.CalendarMonth,
                 onClick = {
                     dateTarget = DateTarget(
                         DateTargetKind.End,
@@ -319,13 +275,32 @@ fun MedicationEditorScreen(
                 },
                 trailing = if (state.regimen.endDate != null) {
                     {
-                        TextButton(
+                        IconButton(
                             onClick = { viewModel.setRegimen(state.regimen.copy(endDate = null)) },
-                            contentPadding = PaddingValues(horizontal = 8.dp),
-                        ) { Text("Clear") }
+                        ) {
+                            Icon(
+                                Icons.Filled.Close,
+                                contentDescription = "Clear end date",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 } else null,
+                modifier = Modifier.fillMaxWidth(),
             )
+
+            // Only an existing course can be stopped or deleted, so a brand new
+            // one has nothing to manage yet.
+            if (isEditing) {
+                Spacer(Modifier.height(28.dp))
+                ManageCard(
+                    stopLabel = "Stop",
+                    onStop = { viewModel.stop(onBack) },
+                    onDelete = { showDeleteDialog = true },
+                    // The scrolling column already applies the page gutter.
+                    gutter = 0.dp,
+                )
+            }
             Spacer(Modifier.height(20.dp))
         }
     }
@@ -340,9 +315,9 @@ private data class DateTarget(
 
 /** Says what is blocking the save button, rather than leaving it mysteriously grey. */
 @Composable
-private fun ValidationHint(state: MedicationEditorState) {
+private fun ValidationHint(state: CourseEditorState) {
     val message = when {
-        state.hasDuplicateTimes -> "Two doses share the same time — change or remove one."
+        state.hasDuplicateTimes -> "Two doses share the same time. Change or remove one."
         !state.quantitiesValid -> "Every dose needs a quantity above zero."
         !state.daysValid -> "Pick at least one day of the week."
         !state.cycleValid -> "A cycle needs both an on and an off length."
@@ -367,22 +342,13 @@ private fun DoseTimeRow(
     onRemove: () -> Unit,
 ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.weight(1.4f)) {
-            OutlinedTextField(
-                value = dose.time.format(editorTimeFormatter),
-                onValueChange = {},
-                readOnly = true,
-                label = { Text("Time") },
-                modifier = Modifier.fillMaxWidth(),
-                colors = fieldColors(),
-            )
-            Box(
-                Modifier
-                    .matchParentSize()
-                    .clickable(onClick = onTimeClick)
-                    .semantics { contentDescription = "Change time" },
-            )
-        }
+        PickerField(
+            label = "Time",
+            value = dose.time.format(editorTimeFormatter),
+            icon = Icons.Filled.Schedule,
+            onClick = onTimeClick,
+            modifier = Modifier.weight(1.4f),
+        )
         Spacer(Modifier.size(8.dp))
         OutlinedTextField(
             value = dose.quantityText,
@@ -392,18 +358,23 @@ private fun DoseTimeRow(
             isError = (dose.quantityText.toDoubleOrNull() ?: 0.0) <= 0.0,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
             modifier = Modifier.weight(0.8f),
-            colors = fieldColors(),
+            colors = editorFieldColors(),
         )
         IconButton(onClick = onRemove, enabled = canRemove) {
-            Icon(Icons.Filled.Delete, contentDescription = "Remove time")
+            // Muted: removing a dose should not be the highest-contrast thing
+            // in the section.
+            Icon(
+                Icons.Filled.Delete,
+                contentDescription = "Remove time",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun RecurrenceControls(
-    state: MedicationEditorState,
+    state: CourseEditorState,
     onChoice: (RecurrenceChoice) -> Unit,
     onRegimen: (Regimen) -> Unit,
 ) {
@@ -415,35 +386,52 @@ private fun RecurrenceControls(
     )
     // Chips rather than a segmented row. A SingleChoiceSegmentedButtonRow is one
     // connected control, so splitting it over two lines reads as two independent
-    // 2-way toggles and rounds the wrong corners. Chips are designed to wrap, and
-    // match the vocabulary already used elsewhere in the app.
-    FlowRow(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        choices.forEach { (choice, label) ->
-            val selected = state.recurrenceChoice == choice
-            FilterChip(
-                selected = selected,
-                onClick = { onChoice(choice) },
-                label = { Text(label, maxLines = 1, softWrap = false) },
-                shape = MaterialTheme.shapes.small,
-                leadingIcon = if (selected) {
-                    {
-                        Icon(
-                            Icons.Filled.Check,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp),
-                        )
-                    }
-                } else null,
-                colors = FilterChipDefaults.filterChipColors(
-                    selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                    selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    selectedLeadingIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                ),
-            )
+    // 2-way toggles and rounds the wrong corners.
+    //
+    // Laid out as a fixed 2x2 rather than a FlowRow: four chips of uneven width
+    // wrapped as 3 + 1, leaving the fourth stranded on its own line beside a
+    // wide gap.
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        choices.chunked(2).forEach { pair ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                pair.forEach { (choice, label) ->
+                    val selected = state.recurrenceChoice == choice
+                    FilterChip(
+                        selected = selected,
+                        onClick = { onChoice(choice) },
+                        label = {
+                            Text(
+                                label,
+                                maxLines = 1,
+                                softWrap = false,
+                                modifier = Modifier.fillMaxWidth(),
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            )
+                        },
+                        shape = MaterialTheme.shapes.small,
+                        leadingIcon = if (selected) {
+                            {
+                                Icon(
+                                    Icons.Filled.Check,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+                        } else null,
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                            selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                            selectedLeadingIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                        ),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(ThymeDimens.TouchTarget),
+                    )
+                }
+            }
         }
     }
     Spacer(Modifier.height(10.dp))
@@ -458,7 +446,7 @@ private fun RecurrenceControls(
                     Box(
                         modifier = Modifier
                             .weight(1f)
-                            .height(38.dp)
+                            .height(ThymeDimens.TouchTarget)
                             .clip(dayShape)
                             .background(
                                 if (selected) MaterialTheme.colorScheme.primaryContainer
@@ -548,69 +536,8 @@ private fun NumberField(
         singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
         modifier = modifier,
-        colors = fieldColors(),
+        colors = editorFieldColors(),
     )
-}
-
-@Composable
-private fun DateButton(
-    label: String,
-    value: String,
-    onClick: () -> Unit,
-    trailing: (@Composable () -> Unit)? = null,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(MaterialTheme.shapes.small)
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.small)
-            .clickable(onClick = onClick)
-            .padding(start = 16.dp, top = 10.dp, bottom = 10.dp, end = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                label,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Text(value, style = MaterialTheme.typography.bodyLarge)
-        }
-        trailing?.invoke()
-    }
-}
-
-@Composable
-private fun ColorPicker(selected: Int, onSelect: (Int) -> Unit) {
-    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        ThymeTheme.accents.medication.forEachIndexed { index, color ->
-            val isSelected = selected == index
-            Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .background(color)
-                    .selectable(
-                        selected = isSelected,
-                        onClick = { onSelect(index) },
-                        role = Role.RadioButton,
-                    )
-                    .semantics {
-                        contentDescription = MedicationColorNames.getOrElse(index) { "Colour" }
-                    },
-                contentAlignment = Alignment.Center,
-            ) {
-                if (isSelected) {
-                    Icon(
-                        imageVector = Icons.Filled.Check,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.surface,
-                        modifier = Modifier.size(20.dp),
-                    )
-                }
-            }
-        }
-    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -640,33 +567,9 @@ private fun TimePickerDialog(
         },
         confirmButton = {
             TextButton(onClick = {
-                onConfirm(
-                    state.hour,
-                    state.minute
-                )
+                onConfirm(state.hour, state.minute)
             }) { Text("Set") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
-
-@Composable
-private fun EditorSectionLabel(text: String) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.labelSmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-}
-
-@Composable
-private fun fieldColors() = OutlinedTextFieldDefaults.colors(
-    focusedBorderColor = MaterialTheme.colorScheme.primary,
-    unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
-    focusedLabelColor = MaterialTheme.colorScheme.primary,
-    unfocusedLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
-    cursorColor = MaterialTheme.colorScheme.primary,
-)
-
-private fun formatQuantity(value: Double): String =
-    if (value % 1.0 == 0.0) value.toInt().toString() else value.toString()

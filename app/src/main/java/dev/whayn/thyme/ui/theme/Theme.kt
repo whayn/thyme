@@ -18,8 +18,8 @@ import dev.whayn.thyme.data.ThymeThemeMode
 
 /**
  * Material's scheme has no role meaning "overdue but not an error", so Thyme
- * adds its own. Extending the theme this way — rather than reaching for a
- * hardcoded Color at the call site — keeps every colour swappable at once.
+ * adds its own. Extending the theme this way, rather than reaching for a
+ * hardcoded Color at the call site, keeps every colour swappable at once.
  */
 @Immutable
 data class ThymeAccents(
@@ -31,7 +31,7 @@ data class ThymeAccents(
     /** Per-medication colours, indexed by `Medication.colorIndex`. */
     val medication: List<Color>,
 ) {
-    /** Safe lookup — an index from an older build never crashes the list. */
+    /** Safe lookup: an index from an older build never crashes the list. */
     fun medicationColor(index: Int): Color =
         medication.getOrElse(index) { medication.first() }
 }

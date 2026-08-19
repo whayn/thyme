@@ -1,6 +1,5 @@
 package dev.whayn.thyme.ui
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,35 +14,23 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.MenuDefaults
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import dev.whayn.thyme.MedicationsState
 import dev.whayn.thyme.data.MedicationWithRegimens
 import dev.whayn.thyme.data.Recurrence
 import dev.whayn.thyme.data.RegimenWithDoses
+import dev.whayn.thyme.ui.theme.ThymeDimens
 import dev.whayn.thyme.ui.theme.ThymeTheme
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -53,28 +40,25 @@ private val courseTimeFormatter = DateTimeFormatter.ofLocalizedTime(FormatStyle.
 
 @Composable
 fun MedicationsScreen(
-    medications: List<MedicationWithRegimens>,
-    onEditRegimen: (medicationId: Long, regimenId: Long) -> Unit,
-    onAddCourse: (medicationId: Long) -> Unit,
-    onStop: (Long) -> Unit,
-    onDelete: (Long) -> Unit,
+    state: MedicationsState,
+    onOpenMedication: (medicationId: Long) -> Unit,
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
 ) {
-    var deleteId by remember { mutableStateOf<Long?>(null) }
-    val today = remember { LocalDate.now() }
-
-    deleteId?.let { id ->
-        AlertDialog(
-            onDismissRequest = { deleteId = null },
-            title = { Text("Delete medication?") },
-            text = { Text("This hides it from every date. Its history will no longer be shown.") },
-            confirmButton = {
-                TextButton(onClick = { onDelete(id); deleteId = null }) { Text("Delete") }
-            },
-            dismissButton = { TextButton(onClick = { deleteId = null }) { Text("Cancel") } },
-        )
+    if (state.loading) {
+        Box(
+            modifier = modifier
+                .fillMaxSize()
+                .padding(contentPadding),
+            contentAlignment = Alignment.Center,
+        ) {
+            CircularProgressIndicator()
+        }
+        return
     }
+
+    val medications = state.medications
+    val today = remember { LocalDate.now() }
 
     if (medications.isEmpty()) {
         Column(
@@ -90,6 +74,7 @@ fun MedicationsScreen(
             Text(
                 "Use the + button to build your daily schedule.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
             )
         }
         return
@@ -98,31 +83,20 @@ fun MedicationsScreen(
     LazyColumn(
         modifier = modifier.fillMaxSize(),
         contentPadding = contentPadding,
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         item {
-            Column(Modifier.padding(start = 24.dp, end = 24.dp, top = 24.dp, bottom = 8.dp)) {
-                Text(
-                    "MEDICATIONS",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-                Spacer(Modifier.height(4.dp))
-                Text("Your courses", style = MaterialTheme.typography.displaySmall)
-            }
+            PageHeader(eyebrow = "Medications", title = "Your courses")
         }
         items(medications, key = { it.medication.id }) { item ->
             MedicationCard(
                 item = item,
                 today = today,
-                onEditRegimen = { regimenId -> onEditRegimen(item.medication.id, regimenId) },
-                onAddCourse = { onAddCourse(item.medication.id) },
-                onStop = { onStop(item.medication.id) },
-                onDelete = { deleteId = item.medication.id },
-                modifier = Modifier.padding(horizontal = 20.dp),
+                onClick = { onOpenMedication(item.medication.id) },
+                modifier = Modifier.padding(horizontal = ThymeDimens.PageGutter),
             )
         }
-        item { Spacer(Modifier.height(72.dp)) }
+        item { Spacer(Modifier.height(96.dp)) }
     }
 }
 
@@ -130,87 +104,73 @@ fun MedicationsScreen(
 private fun MedicationCard(
     item: MedicationWithRegimens,
     today: LocalDate,
-    onEditRegimen: (Long) -> Unit,
-    onAddCourse: () -> Unit,
-    onStop: () -> Unit,
-    onDelete: () -> Unit,
+    onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var menuExpanded by remember { mutableStateOf(false) }
     val accent = ThymeTheme.accents.medicationColor(item.medication.colorIndex)
-    val courses = item.activeRegimens
+    val accentRight = ThymeTheme.accents.medicationColor(item.medication.colorIndexRight)
+    // The list answers "what am I taking", so stopped courses are counted rather
+    // than listed, because three ended courses used to fill the card and bury the one
+    // that was actually running.
+    val current = item.currentRegimens(today)
+    val stoppedCount = item.stoppedRegimens(today).size
 
     Card(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth().clickable(onClick = onClick),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainer,
         ),
     ) {
-        Column(Modifier.padding(start = 18.dp, top = 16.dp, end = 8.dp, bottom = 14.dp)) {
-            Row(verticalAlignment = Alignment.Top) {
-                Box(
-                    Modifier
-                        .padding(top = 6.dp)
-                        .size(12.dp)
-                        .clip(CircleShape)
-                        .background(accent)
-                )
-                Spacer(Modifier.size(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(item.medication.name, style = MaterialTheme.typography.titleLarge)
-                    item.medication.strength?.takeIf { it.isNotBlank() }?.let {
-                        Text(
-                            it,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+        // One padding value on all four sides. The courses used to sit in a
+        // nested surface inset 24dp on the left and 10dp on the right, which
+        // read as visibly off-centre and cost roughly 100dp of height per card.
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.Top,
+        ) {
+            MedicationAvatar(
+                formIndex = item.medication.form,
+                colorLeft = accent,
+                colorRight = accentRight,
+            )
+            Spacer(Modifier.size(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(item.medication.name, style = MaterialTheme.typography.titleLarge)
+                item.medication.strength?.takeIf { it.isNotBlank() }?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Spacer(Modifier.height(10.dp))
+                if (current.isEmpty()) {
+                    Text(
+                        "Not currently taking",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    current.forEachIndexed { index, course ->
+                        // A rule between courses, because two of them stacked as
+                        // plain text ran together into one four-line block with
+                        // no way to see where the first ended.
+                        if (index > 0) {
+                            HorizontalDivider(
+                                modifier = Modifier.padding(vertical = 8.dp),
+                                color = MaterialTheme.colorScheme.outlineVariant,
+                            )
+                        }
+                        CourseSummary(course = course, today = today)
                     }
                 }
-                Box {
-                    IconButton(onClick = { menuExpanded = true }) {
-                        // A pencil promises editing; this menu also stops and deletes.
-                        Icon(Icons.Filled.MoreVert, contentDescription = "Medication actions")
-                    }
-                    // No leading icons: there is no honest icon for "stop taking",
-                    // and mixing icons with none leaves the labels misaligned.
-                    DropdownMenu(
-                        expanded = menuExpanded,
-                        onDismissRequest = { menuExpanded = false },
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("Add another course") },
-                            onClick = { menuExpanded = false; onAddCourse() },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Stop taking") },
-                            onClick = { menuExpanded = false; onStop() },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Delete") },
-                            colors = MenuDefaults.itemColors(
-                                textColor = MaterialTheme.colorScheme.error,
-                            ),
-                            onClick = { menuExpanded = false; onDelete() },
-                        )
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(6.dp))
-            if (courses.isEmpty()) {
-                Text(
-                    "No active course",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 24.dp, end = 10.dp, bottom = 4.dp),
-                )
-            } else {
-                courses.forEach { course ->
-                    CourseRow(
-                        course = course,
-                        today = today,
-                        onClick = { onEditRegimen(course.regimen.id) },
-                        modifier = Modifier.padding(start = 24.dp, end = 10.dp, bottom = 6.dp),
+                if (stoppedCount > 0) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = if (stoppedCount == 1) "1 stopped course"
+                        else "$stoppedCount stopped courses",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
@@ -218,44 +178,33 @@ private fun MedicationCard(
     }
 }
 
+/**
+ * A course as one or two lines of text rather than a nested card.
+ *
+ * The medication card is already a container; putting a second surface inside it
+ * to hold two short lines was box-in-a-box, and it is what made the list scroll
+ * four medications to a screen.
+ */
 @Composable
-private fun CourseRow(
+private fun CourseSummary(
     course: RegimenWithDoses,
     today: LocalDate,
-    onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    // A finished course stays listed — its history is still real — but recedes so
-    // the list reads as "what I'm taking" at a glance.
-    val finished = course.regimen.endDate?.isBefore(today) == true
     val times = course.activeDoses.joinToString(" · ") { it.time.format(courseTimeFormatter) }
 
-    Surface(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(MaterialTheme.shapes.small)
-            .clickable(onClick = onClick),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        shape = MaterialTheme.shapes.small,
-    ) {
-        Column(
-            modifier = Modifier
-                .padding(horizontal = 14.dp, vertical = 10.dp)
-                .alpha(if (finished) 0.55f else 1f),
-        ) {
+    Column(modifier = modifier) {
+        Text(
+            text = Recurrence.summarise(course.regimen, today),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        if (times.isNotEmpty()) {
             Text(
-                text = Recurrence.summarise(course.regimen, today),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface,
+                text = times,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            if (times.isNotEmpty()) {
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    text = times,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
         }
     }
 }

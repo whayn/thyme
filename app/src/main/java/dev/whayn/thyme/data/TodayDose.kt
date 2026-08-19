@@ -9,6 +9,8 @@ data class TodayDose(
     val medicationName: String,
     val strength: String?,
     val colorIndex: Int,
+    val colorIndexRight: Int = colorIndex,
+    val form: Int,
     val logId: Long?,
     val takenAt: Instant?,
 ) {

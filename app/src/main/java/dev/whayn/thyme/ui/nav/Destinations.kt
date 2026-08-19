@@ -16,17 +16,17 @@ object Destinations {
     data object Settings
 
     /**
-     * Both null adds a new medication; a medicationId with no regimenId adds
-     * another course of an existing one; both set edits that course.
+     * A single medication's management screen: edit its identity, add/edit/stop/
+     * delete its courses, or delete the medication.
      */
     @Serializable
-    data class MedicationEditor(
-        val medicationId: Long? = null,
-        val regimenId: Long? = null,
-    )
+    data class MedicationDetail(val medicationId: Long)
 
-    /** One day's doses, drilled into from the Stats calendar — a separate route from
-     *  [Today] so it doesn't get tangled in the bottom nav's tab-switch back-stack logic. */
+    /** Add (regimenId null) or edit a course of an existing medication. */
     @Serializable
-    data class DayDetail(val epochDay: Long)
+    data class CourseEditor(val medicationId: Long, val regimenId: Long? = null)
+
+    /** Create (medicationId null) or edit a medication's name/strength/colour. */
+    @Serializable
+    data class MedicationMetadata(val medicationId: Long? = null)
 }

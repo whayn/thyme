@@ -16,11 +16,17 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
+
+data class DoseListState(
+    val loading: Boolean,
+    val doses: List<TodayDose>,
+)
 
 class DoseListViewModel(
     private val dao: DoseDao,
@@ -44,16 +50,16 @@ class DoseListViewModel(
             )
 
     @OptIn(ExperimentalCoroutinesApi::class)
-    val doses: StateFlow<List<TodayDose>> = date
-        .flatMapLatest { day -> dao.observeDosesFor(day) }
+    val doses: StateFlow<DoseListState> = date
+        .flatMapLatest { day -> dao.observeDosesFor(day).map { DoseListState(loading = false, doses = it) } }
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
-            initialValue = emptyList(),
+            initialValue = DoseListState(loading = true, doses = emptyList()),
         )
 
     /**
-     * Read straight from the backing flows rather than from `date.value` —
+     * Read straight from the backing flows rather than from `date.value`:
      * `stateIn(WhileSubscribed)` stops updating once the UI detaches, so its
      * `.value` can be stale exactly when a write needs the truth.
      */
@@ -62,6 +68,12 @@ class DoseListViewModel(
     fun refreshClock() {
         _today.value = LocalDate.now()
         _now.value = LocalTime.now()
+    }
+
+    /** Selecting the Today tab re-pins the list to the real today. */
+    fun showToday() {
+        refreshClock()
+        _pinnedDate.value = null
     }
 
     /** Picking today un-pins, so the list resumes following the real date. */

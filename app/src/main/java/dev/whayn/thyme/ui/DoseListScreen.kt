@@ -10,6 +10,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
@@ -29,8 +30,13 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.Brightness4
+import androidx.compose.material.icons.filled.WbTwilight
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -46,6 +52,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -54,7 +61,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.whayn.thyme.DoseListState
 import dev.whayn.thyme.data.TodayDose
+import dev.whayn.thyme.ui.theme.ThymeDimens
 import dev.whayn.thyme.ui.theme.ThymeTheme
 import dev.whayn.thyme.ui.theme.rememberReducedMotion
 import java.time.LocalDate
@@ -69,6 +78,10 @@ private val StemX = 72.dp
 private val NodeRadius = 7.dp
 private val CardGap = 10.dp
 
+/** The part-of-day icon that sits on the stem, and the hole punched for it. */
+private val SectionIconSize = 18.dp
+private val SectionBadgeRadius = 13.dp
+
 /** Thyme's day starts at 05:00, so a 02:00 dose is tonight's last, not tomorrow's first. */
 private const val DAY_START_MINUTE = 5 * 60
 
@@ -77,8 +90,21 @@ private val weekdayFormatter = DateTimeFormatter.ofPattern("EEEE")
 private val dayMonthFormatter = DateTimeFormatter.ofPattern("d MMMM")
 private val shortDayFormatter = DateTimeFormatter.ofPattern("EEE")
 
-private enum class PartOfDay(val label: String) {
-    Morning("Morning"), Midday("Midday"), Evening("Evening"), Night("Night")
+/**
+ * The icon rides the stem as a bead, so the header reads as a station on the
+ * timeline rather than a separate block of text. It also carries the meaning
+ * that the label no longer has room to: the label sits out in the card column
+ * now, because "MORNING" at 11sp with 1.4 tracking is wider than the 72dp of
+ * gutter before the stem and used to run straight through the line.
+ */
+private enum class PartOfDay(val label: String, val icon: ImageVector) {
+    Morning("Morning", Icons.Filled.WbTwilight),
+    Midday("Midday", Icons.Filled.LightMode),
+    // Chosen for optical balance as much as meaning: these sit centred on a 2dp
+    // line, so a glyph whose mass hangs off to one side reads as crooked even
+    // when its bounding box is exactly centred.
+    Evening("Evening", Icons.Filled.Brightness4),
+    Night("Night", Icons.Filled.Bedtime),
 }
 
 private fun partOf(time: LocalTime): PartOfDay = when (time.hour) {
@@ -98,16 +124,32 @@ private fun dayOrder(time: LocalTime): Int {
 private fun isOverdue(time: LocalTime, now: LocalTime, taken: Boolean): Boolean =
     !taken && dayOrder(time) < dayOrder(now)
 
-/** What the list actually renders, once headers and the now-marker are folded in. */
+/**
+ * What the list actually renders, once headers and the now-marker are folded in.
+ *
+ * Every line carries what it needs to draw its slice of the stem, because the
+ * stem has to be continuous from the first line to the last, and a header that
+ * doesn't know it sits mid-thread is what previously cut the day into four
+ * disconnected segments.
+ */
 private sealed interface Line {
-    data class Header(val part: PartOfDay) : Line
-    data class Dose(val item: TodayDose) : Line
-    data object Now : Line
+    /** True once this line is behind the current moment, which dims its stem. */
+    val elapsed: Boolean
+
+    data class Header(val part: PartOfDay, override val elapsed: Boolean) : Line
+    data class Dose(
+        val item: TodayDose,
+        override val elapsed: Boolean,
+        /** False when the row above carries the same clock time. */
+        val showTime: Boolean,
+    ) : Line
+
+    data class Now(override val elapsed: Boolean = true) : Line
 }
 
 @Composable
 fun DoseListScreen(
-    doses: List<TodayDose>,
+    state: DoseListState,
     date: LocalDate,
     today: LocalDate,
     now: LocalTime,
@@ -117,6 +159,29 @@ fun DoseListScreen(
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
 ) {
+    // First load: keep the header and week strip (neither needs data), and hold
+    // the list area with a spinner instead of flashing the empty state.
+    if (state.loading) {
+        LazyColumn(
+            modifier = modifier.fillMaxSize(),
+            contentPadding = contentPadding,
+        ) {
+            item(key = "header") { DayHeader(date = date, taken = null, total = null) }
+            item(key = "strip") { WeekStrip(selected = date, today = today, onSelect = onSelectDate) }
+            item(key = "loading") {
+                Box(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 64.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CircularProgressIndicator()
+                }
+            }
+        }
+        return
+    }
+
+    val doses = state.doses
+
     // Keep the strip visible even when this date is empty. A course can start in
     // the future (or only run on weekdays), and the user must still be able to
     // browse to the date where it applies.
@@ -165,16 +230,18 @@ fun DoseListScreen(
                 when (val line = lines[index]) {
                     is Line.Header -> "h-${line.part.name}"
                     is Line.Dose -> "d-${line.item.scheduled.id}"
-                    Line.Now -> "now"
+                    is Line.Now -> "now"
                 }
             },
         ) { index ->
             when (val line = lines[index]) {
-                is Line.Header -> SectionHeader(line.part.label)
-                Line.Now -> NowMarker()
+                is Line.Header -> SectionHeader(line.part, line.elapsed)
+                is Line.Now -> NowMarker()
                 is Line.Dose -> DoseStemRow(
                     item = line.item,
                     now = effectiveNow,
+                    elapsed = line.elapsed,
+                    showTime = line.showTime,
                     onToggle = { onToggle(line.item) },
                 )
             }
@@ -186,7 +253,7 @@ fun DoseListScreen(
 
 /**
  * Groups doses into parts of the day and slots the now-marker in at its true
- * position — including between sections, or at the very end once every dose is
+ * position, including between sections, or at the very end once every dose is
  * behind you. Shown only on today, since other days have no "now".
  */
 private fun buildLines(
@@ -198,75 +265,93 @@ private fun buildLines(
     val nowOrder = dayOrder(now)
     var markerPlaced = !showNow
     var currentPart: PartOfDay? = null
+    var previousTime: LocalTime? = null
 
     return buildList {
         ordered.forEach { item ->
-            if (!markerPlaced && dayOrder(item.scheduled.time) > nowOrder) {
-                add(Line.Now)
+            val time = item.scheduled.time
+            val elapsed = item.taken || dayOrder(time) <= nowOrder
+
+            if (!markerPlaced && dayOrder(time) > nowOrder) {
+                add(Line.Now())
                 markerPlaced = true
             }
-            val part = partOf(item.scheduled.time)
+            val part = partOf(time)
             if (part != currentPart) {
-                add(Line.Header(part))
+                add(Line.Header(part, elapsed = elapsed))
                 currentPart = part
+                // A new section restarts the run, so the first dose under a
+                // header always prints its time even if it repeats the last one.
+                previousTime = null
             }
-            add(Line.Dose(item))
+            // An overdue dose always prints its time, even when it repeats the
+            // row above: "when was this due" is the whole question being asked.
+            val overdue = isOverdue(time, now, item.taken)
+            add(Line.Dose(item, elapsed = elapsed, showTime = overdue || time != previousTime))
+            previousTime = time
         }
-        if (!markerPlaced) add(Line.Now)
+        if (!markerPlaced) add(Line.Now())
     }
 }
 
 @Composable
-private fun DayHeader(date: LocalDate, taken: Int, total: Int) {
+private fun DayHeader(date: LocalDate, taken: Int?, total: Int?) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 24.dp, end = 24.dp, top = 20.dp, bottom = 8.dp)
+            .padding(
+                start = ThymeDimens.PageGutter,
+                end = ThymeDimens.PageGutter,
+                top = 20.dp,
+                bottom = 8.dp,
+            )
     ) {
-        Text(
-            text = date.format(weekdayFormatter).uppercase(),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.primary,
-        )
+        SectionEyebrow(date.format(weekdayFormatter))
         Spacer(Modifier.height(4.dp))
         Text(
+            // displaySmall, matching the other three tabs. Today used to sit a
+            // step higher at displayMedium, so the four tabs opened at two
+            // different sizes.
             text = date.format(dayMonthFormatter),
-            style = MaterialTheme.typography.displayMedium,
+            style = MaterialTheme.typography.displaySmall,
             color = MaterialTheme.colorScheme.onBackground,
         )
-        Spacer(Modifier.height(18.dp))
 
-        val progress = if (total == 0) 0f else taken.toFloat() / total
-        val animatedProgress by animateFloatAsState(
-            targetValue = progress,
-            animationSpec = motionFloatSpec(),
-            label = "progress",
-        )
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(4.dp)
-                .clip(CircleShape)
-                .background(ThymeTheme.accents.stem)
-        ) {
+        if (taken != null && total != null) {
+            Spacer(Modifier.height(18.dp))
+
+            val progress = if (total == 0) 0f else taken.toFloat() / total
+            val animatedProgress by animateFloatAsState(
+                targetValue = progress,
+                animationSpec = motionFloatSpec(),
+                label = "progress",
+            )
             Box(
                 modifier = Modifier
-                    .fillMaxWidth(animatedProgress)
-                    .fillMaxHeight()
+                    .fillMaxWidth()
+                    .height(4.dp)
                     .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primary)
+                    .background(ThymeTheme.accents.stem)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(animatedProgress)
+                        .fillMaxHeight()
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary)
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = when {
+                    total == 0 -> "Nothing scheduled"
+                    taken == total -> "All $total taken"
+                    else -> "$taken of $total taken"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        Spacer(Modifier.height(8.dp))
-        Text(
-            text = when {
-                total == 0 -> "Nothing scheduled"
-                taken == total -> "All $total taken"
-                else -> "$taken of $total taken"
-            },
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
     }
 }
 
@@ -353,45 +438,125 @@ private fun DayPill(
     }
 }
 
+/**
+ * The unbroken vertical line in the left gutter.
+ *
+ * Every line type draws it, which is the whole point: the stem is the app's
+ * signature element and is supposed to read as one continuous day. Section
+ * headers used to be a bare [Text] with no gutter at all, so the thread was cut
+ * once per part of day.
+ */
 @Composable
-private fun SectionHeader(label: String) {
-    Text(
-        text = label.uppercase(),
-        style = MaterialTheme.typography.labelSmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(start = 24.dp, top = 22.dp, bottom = 10.dp),
-    )
+private fun StemGutter(
+    elapsed: Boolean,
+    modifier: Modifier = Modifier,
+    content: @Composable BoxScope.() -> Unit = {},
+) {
+    val accents = ThymeTheme.accents
+    val lineColor = if (elapsed) accents.stemSpent else accents.stem
+    Box(
+        modifier = modifier
+            .width(GutterWidth)
+            .fillMaxHeight(),
+    ) {
+        Canvas(
+            modifier = Modifier
+                .fillMaxHeight()
+                .width(GutterWidth)
+        ) {
+            val x = StemX.toPx()
+            drawLine(
+                color = lineColor,
+                start = Offset(x, 0f),
+                end = Offset(x, size.height),
+                strokeWidth = 2.dp.toPx(),
+            )
+        }
+        content()
+    }
+}
+
+@Composable
+private fun SectionHeader(part: PartOfDay, elapsed: Boolean) {
+    val scheme = MaterialTheme.colorScheme
+    val accents = ThymeTheme.accents
+    val lineColor = if (elapsed) accents.stemSpent else accents.stem
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(IntrinsicSize.Min),
+    ) {
+        // The stem runs the whole row, padding included, so it meets the rows
+        // above and below without a seam.
+        Canvas(
+            modifier = Modifier
+                .fillMaxHeight()
+                .width(GutterWidth)
+        ) {
+            val x = StemX.toPx()
+            drawLine(
+                color = lineColor,
+                start = Offset(x, 0f),
+                end = Offset(x, size.height),
+                strokeWidth = 2.dp.toPx(),
+            )
+        }
+
+        // Badge and label live in one centred Row, so they cannot drift apart.
+        // Aligning the icon to the *row* instead put it 4dp above the text,
+        // because the row's asymmetric padding moves the text's centre but not
+        // the row's. The badge is drawn after the stem Canvas and therefore over
+        // it. That opaque disc is what punches the line out behind the icon.
+        Row(
+            modifier = Modifier.padding(top = 14.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(GutterWidth)
+                    .padding(start = StemX - SectionBadgeRadius),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(SectionBadgeRadius * 2)
+                        .clip(CircleShape)
+                        .background(scheme.background),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = part.icon,
+                        contentDescription = null,
+                        tint = scheme.onSurfaceVariant,
+                        modifier = Modifier.size(SectionIconSize),
+                    )
+                }
+            }
+            // Aligned with the card column, where there is room for it.
+            Text(
+                text = part.label.uppercase(),
+                style = MaterialTheme.typography.labelSmall,
+                color = scheme.onSurfaceVariant,
+                maxLines = 1,
+            )
+        }
+    }
 }
 
 @Composable
 private fun NowMarker() {
     val due = ThymeTheme.accents.due
-    val stem = ThymeTheme.accents.stem
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(30.dp),
+            // Deliberately short. The marker is a hairline between two doses, and
+            // when it lands next to a section header the two rows stack, so every
+            // dp here was showing up as dead gutter between cards.
+            .height(22.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            modifier = Modifier
-                .width(GutterWidth)
-                .fillMaxHeight()
-        ) {
-            // Keep the stem unbroken through the marker — it's one continuous day.
-            Canvas(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .width(GutterWidth)
-            ) {
-                val x = StemX.toPx()
-                drawLine(
-                    color = stem,
-                    start = Offset(x, 0f),
-                    end = Offset(x, size.height),
-                    strokeWidth = 2.dp.toPx(),
-                )
-            }
+        // Keep the stem unbroken through the marker: it's one continuous day.
+        StemGutter(elapsed = true) {
             Text(
                 text = "NOW",
                 style = MaterialTheme.typography.labelSmall,
@@ -424,12 +589,13 @@ private fun NowMarker() {
 private fun DoseStemRow(
     item: TodayDose,
     now: LocalTime,
+    elapsed: Boolean,
+    showTime: Boolean,
     onToggle: () -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
     val accents = ThymeTheme.accents
     val overdue = isOverdue(item.scheduled.time, now, item.taken)
-    val elapsed = item.taken || dayOrder(item.scheduled.time) <= dayOrder(now)
     val medColor = accents.medicationColor(item.colorIndex)
 
     // Attention outranks identity: a due dose goes honey, everything else wears
@@ -458,7 +624,7 @@ private fun DoseStemRow(
                     .width(GutterWidth)
             ) {
                 val x = StemX.toPx()
-                // Centre the node on the card, not the row — the row is taller by
+                // Centre the node on the card, not the row, which is taller by
                 // the gap that separates one card from the next.
                 val cy = (size.height - CardGap.toPx()) / 2f
                 val r = NodeRadius.toPx()
@@ -483,22 +649,27 @@ private fun DoseStemRow(
                 )
             }
 
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(bottom = CardGap)
-            ) {
-                Text(
-                    text = item.scheduled.time.format(timeFormatter),
-                    style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.2.sp),
-                    color = if (overdue) accents.due else scheme.onSurfaceVariant,
-                    textAlign = TextAlign.End,
-                    maxLines = 1,
-                    softWrap = false,
+            // Three doses at 08:00 printed "8:00 AM" three times down the
+            // gutter, which made one moment look like three. The node still
+            // draws for every dose; only the repeated stamp is dropped.
+            if (showTime) {
+                Box(
                     modifier = Modifier
-                        .align(Alignment.CenterStart)
-                        .width(TimeWidth),
-                )
+                        .fillMaxSize()
+                        .padding(bottom = CardGap)
+                ) {
+                    Text(
+                        text = item.scheduled.time.format(timeFormatter),
+                        style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.2.sp),
+                        color = if (overdue) accents.due else scheme.onSurfaceVariant,
+                        textAlign = TextAlign.End,
+                        maxLines = 1,
+                        softWrap = false,
+                        modifier = Modifier
+                            .align(Alignment.CenterStart)
+                            .width(TimeWidth),
+                    )
+                }
             }
         }
 
@@ -529,7 +700,7 @@ private fun DoseCard(
     val shape = MaterialTheme.shapes.medium
 
     Surface(
-        // Clip first so the ripple stays inside the card — the tap target and the
+        // Clip first so the ripple stays inside the card: the tap target and the
         // thing that looks tappable have to be the same shape.
         modifier = modifier
             .clip(shape)
@@ -548,6 +719,14 @@ private fun DoseCard(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            val medColorRight = ThymeTheme.accents.medicationColor(item.colorIndexRight)
+            MedicationAvatar(
+                formIndex = item.form,
+                colorLeft = if (item.taken) scheme.onSurfaceVariant else accentColor,
+                colorRight = if (item.taken) scheme.onSurfaceVariant else medColorRight,
+                containerColor = if (item.taken) scheme.surfaceContainer
+                else scheme.surfaceContainerHighest,
+            )
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = item.medicationName,
@@ -621,8 +800,10 @@ private fun EmptyState(
     onAddMedication: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // Gutter comes from the caller only. This used to add another 40dp on top of
+    // the caller's 32dp, squeezing the copy into a 72dp-inset ribbon.
     Column(
-        modifier = modifier.padding(horizontal = 40.dp),
+        modifier = modifier,
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {

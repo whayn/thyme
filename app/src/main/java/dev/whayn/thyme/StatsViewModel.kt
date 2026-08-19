@@ -11,6 +11,7 @@ import dev.whayn.thyme.data.TodayDose
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
@@ -56,6 +57,12 @@ data class CalendarDay(
     val doses: List<TodayDose>,
 )
 
+data class StatsState(
+    val loading: Boolean,
+    val summary: StatsSummary,
+    val calendarDays: List<CalendarDay>,
+)
+
 class StatsViewModel(private val dao: DoseDao) : ViewModel() {
 
     private val _window = MutableStateFlow(StatsWindow.Month)
@@ -65,7 +72,7 @@ class StatsViewModel(private val dao: DoseDao) : ViewModel() {
     val month: StateFlow<YearMonth> = _month.asStateFlow()
 
     @OptIn(ExperimentalCoroutinesApi::class)
-    val calendarDays: StateFlow<List<CalendarDay>> = _month
+    private val calendarDays: Flow<List<CalendarDay>> = _month
         .flatMapLatest { month ->
             val dates = gridDatesFor(month)
             combine(dates.map(dao::observeDosesFor)) { perDay ->
@@ -74,11 +81,6 @@ class StatsViewModel(private val dao: DoseDao) : ViewModel() {
                 }
             }
         }
-        .stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5_000),
-            initialValue = emptyList(),
-        )
 
     fun previousMonth() {
         _month.value = _month.value.minusMonths(1)
@@ -88,7 +90,7 @@ class StatsViewModel(private val dao: DoseDao) : ViewModel() {
         _month.value = _month.value.plusMonths(1)
     }
 
-    /** Complete Monday–Sunday weeks spanning [month], so the grid never has a ragged first/last row. */
+    /** Complete Monday-Sunday weeks spanning [month], so the grid never has a ragged first/last row. */
     private fun gridDatesFor(month: YearMonth): List<LocalDate> {
         val start = month.atDay(1).with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
         val end = month.atEndOfMonth().with(TemporalAdjusters.nextOrSame(DayOfWeek.SUNDAY))
@@ -96,17 +98,25 @@ class StatsViewModel(private val dao: DoseDao) : ViewModel() {
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
-    val summary: StateFlow<StatsSummary> = _window
+    private val summary: Flow<StatsSummary> = _window
         .flatMapLatest { window ->
             val today = LocalDate.now()
             // Newest first, so buildSummary can walk the streak front-to-back.
             val dates = (0 until window.days).map { today.minusDays(it.toLong()) }
             combine(dates.map(dao::observeDosesFor)) { perDay -> buildSummary(perDay.toList()) }
         }
-        .stateIn(
+
+    val state: StateFlow<StatsState> =
+        combine(summary, calendarDays) { summary, days ->
+            StatsState(loading = false, summary = summary, calendarDays = days)
+        }.stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
-            initialValue = StatsSummary.Empty,
+            initialValue = StatsState(
+                loading = true,
+                summary = StatsSummary.Empty,
+                calendarDays = emptyList(),
+            ),
         )
 
     fun selectWindow(window: StatsWindow) {
@@ -115,9 +125,13 @@ class StatsViewModel(private val dao: DoseDao) : ViewModel() {
 
     /**
      * [perDay] is newest-first, one entry per day in the window. Days with no
-     * scheduled doses are skipped for the streak — nothing to take neither
-     * extends nor breaks it — so the walk stops at the first day that had a
+     * scheduled doses are skipped for the streak, since nothing to take neither
+     * extends nor breaks it, so the walk stops at the first day that had a
      * dose and wasn't fully taken.
+     *
+     * Today is the exception: it is still in progress. An unfinished today used
+     * to zero the streak outright, which meant the number read 0 for most of
+     * every day. It now only ever *extends* the streak, never breaks it.
      */
     private fun buildSummary(perDay: List<List<TodayDose>>): StatsSummary {
         var taken = 0
@@ -139,8 +153,12 @@ class StatsViewModel(private val dao: DoseDao) : ViewModel() {
             }
         }
 
+        fun complete(doses: List<TodayDose>) = doses.isEmpty() || doses.all { it.taken }
+
+        val todayCounts = perDay.firstOrNull()?.let { it.isNotEmpty() && complete(it) } == true
         val streakDays = perDay
-            .takeWhile { doses -> doses.isEmpty() || doses.all { it.taken } }
+            .drop(if (todayCounts) 0 else 1)
+            .takeWhile(::complete)
             .count { doses -> doses.isNotEmpty() }
 
         return StatsSummary(

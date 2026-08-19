@@ -10,28 +10,23 @@ import dev.whayn.thyme.data.MedicationWithRegimens
 import dev.whayn.thyme.data.ThymeDatabase
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.launch
-import java.time.LocalDate
+
+data class MedicationsState(
+    val loading: Boolean,
+    val medications: List<MedicationWithRegimens>,
+)
 
 class MedicationsViewModel(private val dao: DoseDao) : ViewModel() {
 
-    val medications: StateFlow<List<MedicationWithRegimens>> = dao.observeMedications()
+    val medications: StateFlow<MedicationsState> = dao.observeMedications()
+        .map { MedicationsState(loading = false, medications = it) }
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
-            initialValue = emptyList(),
+            initialValue = MedicationsState(loading = true, medications = emptyList()),
         )
-
-    /** Ends the course today. Past days keep showing what was actually taken. */
-    fun stop(medicationId: Long) {
-        viewModelScope.launch { dao.stopMedication(medicationId, LocalDate.now()) }
-    }
-
-    /** Hides it on every date. For entries added by mistake. */
-    fun delete(medicationId: Long) {
-        viewModelScope.launch { dao.deleteMedication(medicationId) }
-    }
 
     companion object {
         fun factory(context: Context) = viewModelFactory {
