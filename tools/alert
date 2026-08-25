@@ -1,0 +1,273 @@
+#!/usr/bin/env bash
+# Drive and observe Thyme's alert system from one command.
+#
+# The pipeline is deliberately hard to reach: doses fire at real calendar times,
+# the alert screen swallows BACK, and `adb shell input text` does not raise the
+# soft keyboard. Everything here goes in through the debug-only broadcast
+# receiver instead (src/debug, never in a release APK).
+#
+# Run `tools/alert help` for the command list.
+
+set -euo pipefail
+
+PKG=dev.whayn.thyme
+RECEIVER="$PKG/.alert.AlertDebugReceiver"
+ACTION=dev.whayn.thyme.DEBUG
+TAG=ThymeAlert
+
+# AGENTS.md records where the SDK lives; PATH is tried first so a normal
+# install needs no configuration.
+ADB="${ADB:-$(command -v adb || true)}"
+[ -n "$ADB" ] || ADB="$HOME/Android/Sdk/platform-tools/adb"
+[ -x "$ADB" ] || { echo "adb not found. Set ADB=/path/to/adb" >&2; exit 1; }
+
+DEVICE=()
+if [ -n "${ANDROID_SERIAL:-}" ]; then DEVICE=(-s "$ANDROID_SERIAL"); fi
+if [ "${1:-}" = "-s" ]; then DEVICE=(-s "$2"); shift 2; fi
+
+adb_() { "$ADB" "${DEVICE[@]}" "$@"; }
+
+# Broadcasts return before the receiver's coroutine finishes, so every command
+# that wants output waits for the matching "DEBUG <cmd> done" line rather than
+# sleeping a guessed interval.
+send() {
+  local cmd="$1"; shift
+  adb_ shell am broadcast -a "$ACTION" -n "$RECEIVER" --es cmd "$cmd" "$@" >/dev/null
+}
+
+# Clear the log, run the command, print what the pipeline said about it.
+send_and_show() {
+  local cmd="$1"; shift
+  adb_ logcat -c
+  send "$cmd" "$@"
+  local waited=0
+  while [ "$waited" -lt 100 ]; do
+    if adb_ logcat -d -s "$TAG:V" | grep -q "DEBUG $cmd done"; then break; fi
+    sleep 0.1; waited=$((waited + 1))
+  done
+  adb_ logcat -d -s "$TAG:V" | sed "s/^/ /"
+}
+
+usage() {
+  cat <<'USAGE'
+tools/alert [-s SERIAL] <command>
+
+  dump [days]              Everything the alert system believes, in one block.
+                           Compares the planner against the armed alarm and the
+                           dose_alerts table, and shouts when they disagree.
+
+  arm [seconds] [tier] [-c]  END TO END. Seeds a real one-shot dose, lets the
+                           scheduler find it and AlarmManager deliver it. The
+                           only command that exercises AlertPlan -> rearm ->
+                           AlarmManager -> receiver -> markFired -> rearm.
+                           Rounds up to a whole minute: scheduled doses are
+                           stored as minute-of-day and cannot express seconds.
+                           tier = LIGHT|MEDIUM|STRONG (default STRONG)
+
+  ---- what an alert LOOKS like -------------------------------------------
+
+  screens                  Gallery of every AlertScreen state, on the device.
+  screen N                 Straight into one case. `screens` lists the numbers.
+
+  fire [tier] [-c] [-n N] [--mixed] [--no-snooze]
+                           The OS-drawn surfaces: notification, heads-up,
+                           full-screen takeover, ringer. Seeds its own group, so
+                           every notification variant is reachable:
+                             -n 3        "Take all" instead of "Taken"
+                             -c          critical: no one-tap Skip action
+                             --mixed     only the first dose critical
+                             --no-snooze snooze cap spent: no Snooze action
+                           tier = LIGHT|MEDIUM|STRONG
+
+  matrix                   Fire every tier x criticality cell in turn, pausing
+                           for a screenshot of each.
+  shot NAME                Screenshot to shots/NAME.png (handles multi-display).
+
+  rearm                    Force a re-arm.
+  taken | skip | snooze    Answer whatever is ringing (or --el doseId N).
+  stop                     Silence the ringer and clear notifications.
+
+  reset [--logs]           Clear dose_alerts and retire [dbg] fixtures, keeping
+                           the seeded history. --logs also clears today's logs.
+
+  fast                     snooze 1m, ring 10s, 2 repeats. Turns a 30-minute
+                           snooze-cap test into a 3-minute one.
+  normal                   Back to the shipped defaults.
+  set K=V ...              snooze|ring|repeats|escalation|repeatUntilAnswered|
+                           alarmClock|defaultTier
+
+  watch                    Follow the whole pipeline live (one tag).
+  alarms                   What AlarmManager actually holds for this app.
+  services                 FGS type and the shortService deadline.
+  channels                 Notification channel importance as the OS sees it.
+
+  deny <what> | grant <what>   notifications | exact | fullscreen
+                           The paths users actually hit and you never see by
+                           accident.
+
+  sleep                    Lock the screen, so a full-screen intent really is
+                           one instead of a heads-up banner.
+  loop [seconds] [tier]    reset, arm, then follow the log. The default loop.
+
+Notes
+  force-stop invalidates reliability tests: it cancels the app's alarms and
+  stops broadcast delivery. Use `adb shell input keyevent KEYCODE_HOME`.
+USAGE
+}
+
+cmd="${1:-help}"; shift || true
+
+case "$cmd" in
+  dump)
+    send_and_show dump ${1:+--ei days "$1"}
+    ;;
+
+  arm)
+    seconds="${1:-30}"; tier="${2:-STRONG}"; crit=false
+    [ "${3:-}" = "-c" ] && crit=true
+    send_and_show arm --el seconds "$seconds" --es tier "$tier" --ez critical "$crit"
+    echo
+    echo "Armed. Follow it with: tools/alert watch"
+    ;;
+
+  fire)
+    tier=STRONG; crit=false; count=1; mixed=false; nosnooze=false
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        LIGHT|MEDIUM|STRONG|NONE) tier="$1" ;;
+        -c|--critical)   crit=true ;;
+        -n)              count="$2"; shift ;;
+        --mixed)         mixed=true ;;
+        --no-snooze)     nosnooze=true ;;
+        *) echo "unknown option '$1'" >&2; exit 1 ;;
+      esac
+      shift
+    done
+    send_and_show fire --es tier "$tier" --ez critical "$crit" \
+      --ei count "$count" --ez mixed "$mixed" --ez noSnooze "$nosnooze"
+    ;;
+
+  screens)
+    adb_ shell am start -n "$PKG/.ui.alert.AlertGalleryActivity" >/dev/null
+    echo "gallery open - tap a case, BACK returns to the index"
+    ;;
+
+  screen)
+    [ -n "${1:-}" ] || { echo "usage: tools/alert screen N" >&2; exit 1; }
+    adb_ shell am start -n "$PKG/.ui.alert.AlertGalleryActivity" --ei index "$1" >/dev/null
+    echo "case $1 open"
+    ;;
+
+  shot)
+    name="${1:-shot}"
+    mkdir -p shots
+    # Bare `screencap -p` on a multi-display emulator writes a text warning
+    # with a .png name. Pass the display id explicitly when there is one.
+    display=$(adb_ shell dumpsys SurfaceFlinger --display-id 2>/dev/null \
+      | head -1 | grep -oE '[0-9]{6,}' | head -1 || true)
+    if [ -n "$display" ]; then
+      adb_ exec-out screencap -p -d "$display" > "shots/$name.png"
+    else
+      adb_ exec-out screencap -p > "shots/$name.png"
+    fi
+    echo "shots/$name.png ($(wc -c < "shots/$name.png") bytes)"
+    ;;
+
+  matrix)
+    # Every cell that changes what the OS draws. Pauses between each so the
+    # heads-up has time to appear and be looked at.
+    for tier in LIGHT MEDIUM STRONG; do
+      for crit in false true; do
+        echo "== $tier critical=$crit - enter for the next, ctrl-c to stop"
+        send fire --es tier "$tier" --ez critical "$crit" --ei count 1 \
+          --ez mixed false --ez noSnooze false
+        read -r _ </dev/tty || true
+        "$0" shot "matrix-${tier}-crit${crit}" || true
+      done
+    done
+    echo "== group of 3, mixed criticality"
+    send fire --es tier STRONG --ez critical true --ei count 3 --ez mixed true --ez noSnooze false
+    ;;
+
+  rearm)  send_and_show rearm ;;
+  taken)  send_and_show answer "$@" ;;
+  skip)   send_and_show answer --ez skip true "$@" ;;
+  snooze) send_and_show snooze "$@" ;;
+  stop)   send "stop"; echo "silenced" ;;
+
+  reset)
+    logs=false; [ "${1:-}" = "--logs" ] && logs=true
+    send_and_show reset --ez logs "$logs"
+    ;;
+
+  fast)
+    send_and_show settings --ei snooze 1 --ei ring 10 --ei repeats 2
+    ;;
+
+  normal)
+    send_and_show settings --ei snooze 10 --ei ring 120 --ei repeats 3 \
+      --ez repeatUntilAnswered false --ez escalation false
+    ;;
+
+  set)
+    args=()
+    for pair in "$@"; do
+      key="${pair%%=*}"; value="${pair#*=}"
+      case "$key" in
+        snooze|ring|repeats)                 args+=(--ei "$key" "$value") ;;
+        escalation|repeatUntilAnswered|alarmClock) args+=(--ez "$key" "$value") ;;
+        defaultTier)                         args+=(--es "$key" "$value") ;;
+        *) echo "unknown setting '$key'" >&2; exit 1 ;;
+      esac
+    done
+    send_and_show settings "${args[@]}"
+    ;;
+
+  watch)
+    adb_ logcat -c
+    echo "following $TAG - ctrl-c to stop"
+    adb_ logcat -v time -s "$TAG:V"
+    ;;
+
+  alarms)
+    # Exactly one FIRE and one HEARTBEAT, always. More than that is the bug.
+    adb_ shell dumpsys alarm | grep -A 30 "$PKG" || echo "no alarms held for $PKG"
+    ;;
+
+  services) adb_ shell dumpsys activity services "$PKG" ;;
+  channels) adb_ shell dumpsys notification_manager channels | grep -A 10 thyme_alert ;;
+
+  deny|grant)
+    mode=ignore; [ "$cmd" = grant ] && mode=allow
+    case "${1:-}" in
+      notifications)
+        if [ "$cmd" = deny ]; then
+          adb_ shell pm revoke "$PKG" android.permission.POST_NOTIFICATIONS
+        else
+          adb_ shell pm grant "$PKG" android.permission.POST_NOTIFICATIONS
+        fi ;;
+      exact)      adb_ shell cmd appops set "$PKG" SCHEDULE_EXACT_ALARM "$mode" ;;
+      fullscreen) adb_ shell cmd appops set "$PKG" USE_FULL_SCREEN_INTENT "$mode" ;;
+      *) echo "usage: tools/alert $cmd notifications|exact|fullscreen" >&2; exit 1 ;;
+    esac
+    echo "$cmd ${1} -> done. Confirm with: tools/alert dump"
+    ;;
+
+  sleep)
+    adb_ shell input keyevent KEYCODE_SLEEP
+    echo "screen off - a full-screen intent will now take over rather than peek"
+    ;;
+
+  loop)
+    seconds="${1:-30}"; tier="${2:-STRONG}"
+    send reset --ez logs false
+    sleep 1
+    adb_ logcat -c
+    send arm --el seconds "$seconds" --es tier "$tier" --ez critical false
+    echo "reset, armed for ~${seconds}s at $tier - following the log, ctrl-c to stop"
+    adb_ logcat -v time -s "$TAG:V"
+    ;;
+
+  help|-h|--help) usage ;;
+  *) echo "unknown command '$cmd'" >&2; usage; exit 1 ;;
+esac

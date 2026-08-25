@@ -2,7 +2,38 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+
+    <!-- Runtime permission from API 33. Asked once there is a medication worth
+         being reminded about, never at cold start. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Exact alarms. Both are declared on purpose:
+         SCHEDULE_EXACT_ALARM is install-granted on 31-32 and user-grantable on
+         33+; USE_EXACT_ALARM is auto-granted on 33+ but Play scopes it to
+         alarm/timer/calendar apps. Declaring both means it works today, and if
+         Play ever objects, dropping USE_EXACT_ALARM leaves the already-live
+         request flow in place. canScheduleExactAlarms() is checked regardless. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+
+    <!-- Auto-granted on 29-33. From API 34 it is app-op gated and revoked by
+         default for anything the system does not consider a calling or alarm
+         app, so canUseFullScreenIntent() must be checked at runtime. -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SHORT_SERVICE" />
+
+    <!-- REQUEST_IGNORE_BATTERY_OPTIMIZATIONS is deliberately NOT declared: it is
+         on Play's restricted list. The settings deep link needs no permission
+         and costs the user two extra taps, once, ever. -->
+
     <application
+        android:name=".ThymeApplication"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
@@ -14,6 +45,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTop"
             android:label="@string/app_name"
             android:theme="@style/Theme.Thyme"
             android:windowSoftInputMode="adjustResize">
@@ -23,6 +55,58 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Receives the one scheduled alarm and the heartbeat. Never exported:
+             it only ever gets PendingIntents this app created. -->
+        <receiver
+            android:name=".alert.AlertAlarmReceiver"
+            android:exported="false" />
+
+        <!-- The alert itself. Its own task, invisible to Recents, so pressing
+             Home leaves no ghost of the main app behind it and a swipe cannot
+             resurrect a stale alarm screen. -->
+        <activity
+            android:name=".ui.alert.AlertActivity"
+            android:exported="false"
+            android:launchMode="singleInstance"
+            android:taskAffinity=""
+            android:excludeFromRecents="true"
+            android:autoRemoveFromRecents="true"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:resizeableActivity="false"
+            android:theme="@style/Theme.Thyme.Alert" />
+
+        <!-- Rings for Medium and Strong. shortService needs no Play Console
+             declaration and does not misrepresent what this is; its ~3 minute
+             ceiling matches the ring cap we would want anyway.
+             stopWithTask=false so swiping the app from Recents does not
+             silence an alarm that is currently going off. -->
+        <service
+            android:name=".alert.AlertRingerService"
+            android:exported="false"
+            android:stopWithTask="false"
+            android:foregroundServiceType="shortService" />
+
+        <!-- The notification's own buttons. Never exported: it only ever
+             receives PendingIntents this app created. -->
+        <receiver
+            android:name=".alert.AlertActionReceiver"
+            android:exported="false" />
+
+        <!-- Protected system broadcasts. exported="true" is required for these
+             to be delivered and is safe: no third-party app can send them. -->
+        <receiver
+            android:name=".alert.SystemEventReceiver"
+            android:exported="true"
+            android:directBootAware="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

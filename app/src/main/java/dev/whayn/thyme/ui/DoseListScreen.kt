@@ -32,6 +32,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Brightness4
 import androidx.compose.material.icons.filled.WbTwilight
@@ -83,7 +84,7 @@ private val SectionIconSize = 18.dp
 private val SectionBadgeRadius = 13.dp
 
 /** Thyme's day starts at 05:00, so a 02:00 dose is tonight's last, not tomorrow's first. */
-private const val DAY_START_MINUTE = 5 * 60
+internal const val DAY_START_MINUTE = 5 * 60
 
 private val timeFormatter = DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT)
 private val weekdayFormatter = DateTimeFormatter.ofPattern("EEEE")
@@ -115,14 +116,35 @@ private fun partOf(time: LocalTime): PartOfDay = when (time.hour) {
 }
 
 /** Minutes since 05:00, so sorting and section order agree without special cases. */
-private fun dayOrder(time: LocalTime): Int {
+internal fun dayOrder(time: LocalTime): Int {
     val minutes = time.hour * 60 + time.minute
     return if (minutes >= DAY_START_MINUTE) minutes - DAY_START_MINUTE
     else minutes + (24 * 60 - DAY_START_MINUTE)
 }
 
-private fun isOverdue(time: LocalTime, now: LocalTime, taken: Boolean): Boolean =
-    !taken && dayOrder(time) < dayOrder(now)
+/**
+ * Where the displayed day sits relative to the real one. Past days are wholly
+ * behind you and future days wholly ahead, whatever the clock says.
+ */
+internal enum class DayPosition { Past, Today, Future }
+
+/**
+ * Raw clock comparison, deliberately *not* [dayOrder]. That function rotates the
+ * clock so 05:00 is zero, which is a valid sort key but not a valid "is this
+ * before that" test: the rotation breaks the ordering for anything spanning it.
+ * Using it here marked every dose overdue between 00:00 and 05:00, because
+ * dayOrder(03:00) is 1320 and so compares as later than the whole day.
+ */
+internal fun isOverdue(
+    time: LocalTime,
+    now: LocalTime,
+    position: DayPosition,
+    resolved: Boolean,
+): Boolean = !resolved && when (position) {
+    DayPosition.Past -> true
+    DayPosition.Future -> false
+    DayPosition.Today -> time < now
+}
 
 /**
  * What the list actually renders, once headers and the now-marker are folded in.
@@ -202,15 +224,17 @@ fun DoseListScreen(
         return
     }
 
-    val isToday = date == today
     // Only "today" has a present moment in it; past days are wholly elapsed,
-    // future days wholly ahead.
-    val effectiveNow = when {
-        isToday -> now
-        date.isBefore(today) -> LocalTime.of(4, 59)
-        else -> LocalTime.of(5, 0)
+    // future days wholly ahead. This used to be smuggled through a sentinel
+    // time - 04:59 and 05:00, chosen to land at either end of dayOrder's
+    // rotation - which only worked while elapsed/overdue went through dayOrder.
+    // Say it directly instead, so the two can never drift apart again.
+    val position = when {
+        date == today -> DayPosition.Today
+        date.isBefore(today) -> DayPosition.Past
+        else -> DayPosition.Future
     }
-    val lines = remember(doses, effectiveNow, isToday) { buildLines(doses, effectiveNow, isToday) }
+    val lines = remember(doses, now, position) { buildLines(doses, now, position) }
     val takenCount = doses.count { it.taken }
 
     LazyColumn(
@@ -239,7 +263,8 @@ fun DoseListScreen(
                 is Line.Now -> NowMarker()
                 is Line.Dose -> DoseStemRow(
                     item = line.item,
-                    now = effectiveNow,
+                    now = now,
+                    position = position,
                     elapsed = line.elapsed,
                     showTime = line.showTime,
                     onToggle = { onToggle(line.item) },
@@ -259,20 +284,28 @@ fun DoseListScreen(
 private fun buildLines(
     doses: List<TodayDose>,
     now: LocalTime,
-    showNow: Boolean,
+    position: DayPosition,
 ): List<Line> {
     val ordered = doses.sortedBy { dayOrder(it.scheduled.time) }
-    val nowOrder = dayOrder(now)
-    var markerPlaced = !showNow
+    var markerPlaced = position != DayPosition.Today
     var currentPart: PartOfDay? = null
     var previousTime: LocalTime? = null
 
     return buildList {
         ordered.forEach { item ->
             val time = item.scheduled.time
-            val elapsed = item.taken || dayOrder(time) <= nowOrder
+            // Elapsed and the marker both read the raw clock, so they always
+            // agree. Ordering still comes from dayOrder, and the two only
+            // diverge for a dose before 05:00: it sorts to the bottom as
+            // tonight's last pill while having already happened this morning.
+            // That is the truth under calendar days, so let it show.
+            val elapsed = item.resolved || when (position) {
+                DayPosition.Past -> true
+                DayPosition.Future -> false
+                DayPosition.Today -> time <= now
+            }
 
-            if (!markerPlaced && dayOrder(time) > nowOrder) {
+            if (!markerPlaced && time > now) {
                 add(Line.Now())
                 markerPlaced = true
             }
@@ -286,7 +319,7 @@ private fun buildLines(
             }
             // An overdue dose always prints its time, even when it repeats the
             // row above: "when was this due" is the whole question being asked.
-            val overdue = isOverdue(time, now, item.taken)
+            val overdue = isOverdue(time, now, position, item.resolved)
             add(Line.Dose(item, elapsed = elapsed, showTime = overdue || time != previousTime))
             previousTime = time
         }
@@ -589,13 +622,14 @@ private fun NowMarker() {
 private fun DoseStemRow(
     item: TodayDose,
     now: LocalTime,
+    position: DayPosition,
     elapsed: Boolean,
     showTime: Boolean,
     onToggle: () -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
     val accents = ThymeTheme.accents
-    val overdue = isOverdue(item.scheduled.time, now, item.taken)
+    val overdue = isOverdue(item.scheduled.time, now, position, item.resolved)
     val medColor = accents.medicationColor(item.colorIndex)
 
     // Attention outranks identity: a due dose goes honey, everything else wears
@@ -695,7 +729,7 @@ private fun DoseCard(
 ) {
     val scheme = MaterialTheme.colorScheme
     val containerTarget =
-        if (item.taken) scheme.surfaceContainerLow else scheme.surfaceContainer
+        if (item.resolved) scheme.surfaceContainerLow else scheme.surfaceContainer
     val container by animateColorAsState(containerTarget, motionColorSpec(), label = "card")
     val shape = MaterialTheme.shapes.medium
 
@@ -705,7 +739,10 @@ private fun DoseCard(
         modifier = modifier
             .clip(shape)
             .toggleable(
-                value = item.taken,
+                // Resolved, not taken: tapping a skipped row clears it back to
+                // pending, so the control has to read as "on" for both outcomes
+                // or the checkbox state lies to screen readers.
+                value = item.resolved,
                 onValueChange = { onToggle() },
                 role = Role.Checkbox,
             ),
@@ -722,23 +759,30 @@ private fun DoseCard(
             val medColorRight = ThymeTheme.accents.medicationColor(item.colorIndexRight)
             MedicationAvatar(
                 formIndex = item.form,
-                colorLeft = if (item.taken) scheme.onSurfaceVariant else accentColor,
-                colorRight = if (item.taken) scheme.onSurfaceVariant else medColorRight,
-                containerColor = if (item.taken) scheme.surfaceContainer
+                colorLeft = if (item.resolved) scheme.onSurfaceVariant else accentColor,
+                colorRight = if (item.resolved) scheme.onSurfaceVariant else medColorRight,
+                containerColor = if (item.resolved) scheme.surfaceContainer
                 else scheme.surfaceContainerHighest,
             )
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = item.medicationName,
                     style = MaterialTheme.typography.titleLarge,
-                    color = if (item.taken) scheme.onSurfaceVariant else scheme.onSurface,
+                    color = if (item.resolved) scheme.onSurfaceVariant else scheme.onSurface,
                 )
                 val detail = doseDetail(item)
-                if (overdue || detail.isNotEmpty()) {
+                val reason = item.skipReason?.takeIf { it.isNotBlank() }
+                if (overdue || item.skipped || detail.isNotEmpty()) {
                     Spacer(Modifier.height(3.dp))
                     Text(
                         text = buildAnnotatedString {
-                            if (overdue) {
+                            if (item.skipped) {
+                                withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) {
+                                    append("Skipped")
+                                }
+                                if (reason != null) append(" · $reason")
+                                if (detail.isNotEmpty()) append("   ")
+                            } else if (overdue) {
                                 withStyle(
                                     SpanStyle(
                                         color = ThymeTheme.accents.due,
@@ -754,25 +798,39 @@ private fun DoseCard(
                     )
                 }
             }
-            CheckDot(taken = item.taken, accentColor = accentColor)
+            CheckDot(taken = item.taken, skipped = item.skipped, accentColor = accentColor)
         }
     }
 }
 
 @Composable
-private fun CheckDot(taken: Boolean, accentColor: Color) {
+private fun CheckDot(taken: Boolean, skipped: Boolean, accentColor: Color) {
     val scheme = MaterialTheme.colorScheme
+    // Skipped fills too - it is a decision, not an absence - but in the muted
+    // role rather than the medication's colour, and it wears a dash, not a tick.
     val container by animateColorAsState(
-        if (taken) accentColor else Color.Transparent,
+        when {
+            taken -> accentColor
+            skipped -> scheme.surfaceContainerHighest
+            else -> Color.Transparent
+        },
         motionColorSpec(),
         label = "dot",
     )
     val border by animateColorAsState(
-        if (taken) accentColor else scheme.outline,
+        when {
+            taken -> accentColor
+            skipped -> scheme.outlineVariant
+            else -> scheme.outline
+        },
         motionColorSpec(),
         label = "dotBorder",
     )
-    val scale by animateFloatAsState(if (taken) 1f else 0f, motionFloatSpec(), label = "tick")
+    val scale by animateFloatAsState(
+        if (taken || skipped) 1f else 0f,
+        motionFloatSpec(),
+        label = "tick",
+    )
 
     Box(
         modifier = Modifier
@@ -784,11 +842,12 @@ private fun CheckDot(taken: Boolean, accentColor: Color) {
     ) {
         if (scale > 0.01f) {
             Icon(
-                imageVector = Icons.Filled.Check,
+                imageVector = if (skipped) Icons.Filled.Remove else Icons.Filled.Check,
                 contentDescription = null, // the card already announces checked state
                 // Medication colours are light on dark and dark on light, so the
-                // page surface is always the correct contrast for the tick.
-                tint = scheme.surface,
+                // page surface is always the correct contrast for the tick. The
+                // skipped dash sits on a surface tone instead, so it needs ink.
+                tint = if (skipped) scheme.onSurfaceVariant else scheme.surface,
                 modifier = Modifier.size((20f * scale).dp),
             )
         }

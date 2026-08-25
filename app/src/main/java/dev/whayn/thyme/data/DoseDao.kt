@@ -2,10 +2,13 @@ package dev.whayn.thyme.data
 
 import androidx.room.Dao
 import androidx.room.Insert
+import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
 import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
+import java.time.Instant
 import java.time.LocalDate
 
 @Dao
@@ -30,8 +33,12 @@ interface DoseDao {
                m.colorIndex AS colorIndex,
                m.colorIndexRight AS colorIndexRight,
                m.form AS form,
+               m.alertTier AS alertTier,
+               m.critical AS critical,
                l.id AS logId,
-               l.takenAt AS takenAt
+               l.loggedAt AS loggedAt,
+               l.outcome AS outcome,
+               l.skipReason AS skipReason
         FROM scheduled_doses AS s
         JOIN regimens AS r
             ON r.id = s.regimenId
@@ -55,6 +62,17 @@ interface DoseDao {
     fun observeDosesFor(date: LocalDate): Flow<List<TodayDose>> =
         observeDosesForDate(date, date.dayOfWeekBit())
 
+    /**
+     * One-shot read of [observeDosesFor], for callers with no lifecycle to
+     * observe from - the alarm scheduler, mainly.
+     *
+     * Deliberately reuses the Flow instead of adding a `suspend` twin of the
+     * query: that `WHERE`/`LEFT JOIN` is load-bearing (the `forDate` match must
+     * stay in the join or untaken doses vanish), and a second copy would drift.
+     */
+    suspend fun dosesFor(date: LocalDate): List<TodayDose> =
+        observeDosesFor(date).first()
+
     @Insert
     suspend fun insertLog(log: DoseLog)
 
@@ -63,6 +81,103 @@ interface DoseDao {
 
     @Query("DELETE FROM dose_logs WHERE scheduledDoseId = :scheduledDoseId AND forDate = :date")
     suspend fun deleteLog(scheduledDoseId: Long, date: LocalDate)
+
+    @Query(
+        """
+        UPDATE dose_logs SET outcome = :outcome, skipReason = :reason, loggedAt = :at
+        WHERE scheduledDoseId = :scheduledDoseId AND forDate = :date
+    """
+    )
+    suspend fun updateLogOutcome(
+        scheduledDoseId: Long,
+        date: LocalDate,
+        outcome: DoseOutcome,
+        reason: String?,
+        at: Instant,
+    ): Int
+
+    /**
+     * Records what happened to one dose, whichever way round it goes.
+     *
+     * Must be an upsert, not an insert: the unique index on
+     * (scheduledDoseId, forDate) means a dose already marked skipped has a row
+     * even though `taken` is false, so a plain insert would hit the constraint
+     * and throw. Changing one's mind - skipped, then actually taken - is a
+     * normal thing to do.
+     */
+    @Transaction
+    suspend fun resolveDose(
+        scheduledDoseId: Long,
+        forDate: LocalDate,
+        outcome: DoseOutcome,
+        reason: String? = null,
+        at: Instant = Instant.now(),
+    ) {
+        val updated = updateLogOutcome(scheduledDoseId, forDate, outcome, reason, at)
+        if (updated == 0) {
+            insertLog(
+                DoseLog(
+                    scheduledDoseId = scheduledDoseId,
+                    forDate = forDate,
+                    loggedAt = at,
+                    outcome = outcome,
+                    skipReason = reason,
+                )
+            )
+        }
+    }
+
+    // ── Alert state ──────────────────────────────────────────────────────────
+
+    /**
+     * Every alert still waiting to make noise.
+     *
+     * Rows only exist for doses that actually fired or were snoozed, so this is
+     * proportional to alerts that happened rather than to doses times days.
+     */
+    @Query("SELECT * FROM dose_alerts WHERE state = 'SNOOZED' ORDER BY nextFireAt")
+    suspend fun snoozedAlerts(): List<DoseAlert>
+
+    @Query("SELECT * FROM dose_alerts WHERE scheduledDoseId = :scheduledDoseId AND forDate = :date")
+    suspend fun alertFor(scheduledDoseId: Long, date: LocalDate): DoseAlert?
+
+    /**
+     * Every alert row from [from] onwards, so the scheduler can tell which doses
+     * have already had their turn.
+     *
+     * Without this the catch-up window becomes a re-fire loop: a dose that just
+     * rang is still unresolved and still recent, so it stays the next candidate
+     * and the alarm re-arms into the past forever.
+     */
+    @Query("SELECT * FROM dose_alerts WHERE forDate >= :from")
+    suspend fun alertsFrom(from: LocalDate): List<DoseAlert>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertAlert(alert: DoseAlert): Long
+
+    @Query("DELETE FROM dose_alerts WHERE scheduledDoseId = :scheduledDoseId AND forDate = :date")
+    suspend fun deleteAlert(scheduledDoseId: Long, date: LocalDate)
+
+    /** Housekeeping on every re-arm. One indexed delete, effectively free. */
+    @Query("DELETE FROM dose_alerts WHERE forDate < :before")
+    suspend fun pruneAlerts(before: LocalDate)
+
+    /**
+     * The alert settings behind a set of scheduled doses.
+     *
+     * The scheduler needs these for snoozed rows, where it has a dose id but no
+     * [TodayDose] to read the tier from.
+     */
+    @Query(
+        """
+        SELECT s.id AS scheduledDoseId, m.alertTier AS alertTier, m.critical AS critical
+        FROM scheduled_doses AS s
+        JOIN regimens AS r ON r.id = s.regimenId
+        JOIN medications AS m ON m.id = r.medicationId
+        WHERE s.id IN (:scheduledDoseIds)
+    """
+    )
+    suspend fun alertSettingsFor(scheduledDoseIds: List<Long>): List<DoseAlertSettings>
 
     // ── Medication management ────────────────────────────────────────────────
 
@@ -112,6 +227,14 @@ interface DoseDao {
 
     @Update
     suspend fun updateMedication(medication: Medication)
+
+    /**
+     * Alert settings are edited from the detail screen, long after the create
+     * wizard has been and gone, so they get their own narrow write rather than
+     * a whole-row update that could clobber a concurrent identity edit.
+     */
+    @Query("UPDATE medications SET alertTier = :tier, critical = :critical WHERE id = :id")
+    suspend fun updateAlertSettings(id: Long, tier: AlertTier, critical: Boolean)
 
     @Insert
     suspend fun insertRegimen(regimen: Regimen): Long

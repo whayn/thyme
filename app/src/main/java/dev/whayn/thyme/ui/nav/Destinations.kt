@@ -29,4 +29,8 @@ object Destinations {
     /** Create (medicationId null) or edit a medication's name/strength/colour. */
     @Serializable
     data class MedicationMetadata(val medicationId: Long? = null)
+
+    /** Everything that decides whether an alarm actually goes off. */
+    @Serializable
+    data object AlertSetup
 }

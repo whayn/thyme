@@ -26,6 +26,15 @@ data class ThymeAccents(
     val due: Color,
     val onDue: Color,
     val dueContainer: Color,
+    /**
+     * Ink for text sitting **on** [dueContainer].
+     *
+     * Added because its absence was an active trap: [onDue] is white in light
+     * and near-black in dark - correct on [due], unreadable on [dueContainer]
+     * in both. The full-screen alert is the first surface in the app to use
+     * dueContainer, so nothing had caught it before.
+     */
+    val onDueContainer: Color,
     val stem: Color,
     val stemSpent: Color,
     /** Per-medication colours, indexed by `Medication.colorIndex`. */
@@ -40,6 +49,7 @@ private val DarkAccents = ThymeAccents(
     due = Honey,
     onDue = Color(0xFF3A2A0B),
     dueContainer = HoneyDeep,
+    onDueContainer = HoneyLight,
     stem = Stem,
     stemSpent = StemLit,
     medication = MedicationColorsDark,
@@ -49,6 +59,7 @@ private val LightAccents = ThymeAccents(
     due = HoneyDark,
     onDue = Color(0xFFFFFFFF),
     dueContainer = HoneyLight,
+    onDueContainer = Color(0xFF3A2A0B),
     stem = Color(0xFFC4D1BF),
     stemSpent = Hedge,
     medication = MedicationColorsLight,

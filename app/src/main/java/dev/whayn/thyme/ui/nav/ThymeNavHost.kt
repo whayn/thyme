@@ -21,6 +21,7 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.toRoute
+import dev.whayn.thyme.alert.AlarmScheduler
 import dev.whayn.thyme.DoseListViewModel
 import dev.whayn.thyme.MedicationDetailViewModel
 import dev.whayn.thyme.MedicationsViewModel
@@ -31,6 +32,7 @@ import dev.whayn.thyme.ui.DoseListScreen
 import dev.whayn.thyme.ui.MedicationDetailScreen
 import dev.whayn.thyme.ui.MedicationMetadataScreen
 import dev.whayn.thyme.ui.MedicationsScreen
+import dev.whayn.thyme.ui.AlertSetupScreen
 import dev.whayn.thyme.ui.SettingsScreen
 import dev.whayn.thyme.ui.StatsScreen
 import dev.whayn.thyme.ui.theme.rememberReducedMotion
@@ -92,8 +94,13 @@ fun ThymeNavHost(
         },
     ) {
         composable<Destinations.Today> {
+            val alarmContext = LocalContext.current.applicationContext
             LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
                 doseListViewModel.refreshClock()
+                // Opening the app is a free chance to notice the alarm went
+                // missing - an OEM killed it, an update cleared it, the clock
+                // moved. rearm() is idempotent, so this costs one indexed read.
+                AlarmScheduler.get(alarmContext).requestRearm("resume")
             }
             DoseListScreen(
                 state = doseListViewModel.doses.collectAsStateWithLifecycle().value,
@@ -149,11 +156,38 @@ fun ThymeNavHost(
             )
             SettingsScreen(
                 settings = viewModel.settings.collectAsStateWithLifecycle().value,
+                alertSettings = viewModel.alertSettings.collectAsStateWithLifecycle().value,
                 onThemeModeChange = viewModel::setThemeMode,
                 onDynamicColorChange = viewModel::setDynamicColor,
+                onSnoozeMinutesChange = viewModel::setSnoozeMinutes,
+                onRingSecondsChange = viewModel::setRingSeconds,
+                onRepeatUntilAnsweredChange = viewModel::setRepeatUntilAnswered,
+                onUseAlarmClockChange = viewModel::setUseAlarmClock,
+                onDefaultTierChange = viewModel::setDefaultAlertTier,
+                onOpenAlertSetup = { navController.navigate(Destinations.AlertSetup) },
                 contentPadding = contentPadding,
                 onSeedFakeData = viewModel::seedFakeData,
                 onClearAllData = viewModel::clearAllData,
+            )
+        }
+        composable<Destinations.AlertSetup>(
+            enterTransition = { fullScreenEnter(reducedMotion) },
+            exitTransition = { if (reducedMotion) ExitTransition.None else fadeOut(tween(300)) },
+            popEnterTransition = { if (reducedMotion) EnterTransition.None else fadeIn(tween(300)) },
+            popExitTransition = { fullScreenExit(reducedMotion) },
+        ) {
+            val context = LocalContext.current.applicationContext
+            val viewModel: SettingsViewModel = viewModel(
+                factory = SettingsViewModel.factory(context),
+            )
+            val alerts = viewModel.alertSettings.collectAsStateWithLifecycle().value
+            AlertSetupScreen(
+                nextFireAtMillis = alerts.nextFireAtMillis,
+                lastRearmAtMillis = alerts.lastRearmAtMillis,
+                oemDismissed = alerts.oemGuidanceDismissed,
+                onDismissOem = viewModel::dismissOemGuidance,
+                onTestAlarm = viewModel::testAlarm,
+                onBack = { navController.popBackStack() },
             )
         }
         composable<Destinations.MedicationDetail>(
@@ -183,6 +217,7 @@ fun ThymeNavHost(
                 onDeleteMedication = {
                     viewModel.deleteMedication { navController.popBackStack() }
                 },
+                onAlertSettingsChange = viewModel::setAlertSettings,
                 onBack = { navController.popBackStack() },
             )
         }
@@ -207,6 +242,7 @@ fun ThymeNavHost(
             popExitTransition = { fullScreenExit(reducedMotion) },
         ) { backStackEntry ->
             val destination = backStackEntry.toRoute<Destinations.MedicationMetadata>()
+            val alarmContext = LocalContext.current.applicationContext
             MedicationMetadataScreen(
                 medicationId = destination.medicationId,
                 onSaved = { id ->
@@ -218,6 +254,7 @@ fun ThymeNavHost(
                         navController.popBackStack()
                     }
                 },
+                onTestAlert = { AlarmScheduler.get(alarmContext).requestTestAlarm() },
                 onBack = { navController.popBackStack() },
             )
         }

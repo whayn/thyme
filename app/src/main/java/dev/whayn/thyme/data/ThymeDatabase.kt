@@ -7,9 +7,15 @@ import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
 
 @Database(
-    entities = [Medication::class, Regimen::class, ScheduledDose::class, DoseLog::class],
-    version = 6,
-    exportSchema = false
+    entities = [
+        Medication::class,
+        Regimen::class,
+        ScheduledDose::class,
+        DoseLog::class,
+        DoseAlert::class,
+    ],
+    version = 7,
+    exportSchema = true
 )
 @TypeConverters(Converters::class)
 abstract class ThymeDatabase : RoomDatabase() {
@@ -27,7 +33,12 @@ abstract class ThymeDatabase : RoomDatabase() {
                     ThymeDatabase::class.java,
                     "thyme.db"
                 )
-                    .fallbackToDestructiveMigration(dropAllTables = true) // to drop before prod
+                    // Real migrations from v7 on: there is medication history in
+                    // here now, and a destructive fallback would take it out on
+                    // the next schema change. Downgrades still wipe - that is the
+                    // one case where starting over is the right answer.
+                    .addMigrations(Migration6to7)
+                    .fallbackToDestructiveMigrationOnDowngrade(dropAllTables = true)
                     .build()
                     .also { instance = it }
             }

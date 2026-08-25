@@ -5,6 +5,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import dev.whayn.thyme.alert.AlarmScheduler
+import dev.whayn.thyme.data.AlertTier
 import dev.whayn.thyme.data.DoseDao
 import dev.whayn.thyme.data.MedicationWithRegimens
 import dev.whayn.thyme.data.ThymeDatabase
@@ -41,6 +43,7 @@ data class MedicationDetailState(
 
 class MedicationDetailViewModel(
     private val dao: DoseDao,
+    private val alarms: AlarmScheduler,
     private val medicationId: Long,
 ) : ViewModel() {
 
@@ -66,7 +69,9 @@ class MedicationDetailViewModel(
             // perDay[0] is today, because `dates` counts backwards from it.
             val now = LocalTime.now()
             val nextToday = perDay.firstOrNull()
-                ?.filter { it.medicationId == medicationId && !it.taken }
+                // `resolved`, not `taken`: a dose you deliberately skipped is
+                // settled, and would otherwise be offered as "next up" forever.
+                ?.filter { it.medicationId == medicationId && !it.resolved }
                 ?.map { it.scheduled.time }
                 ?.filter { it > now }
                 ?.minOrNull()
@@ -89,15 +94,35 @@ class MedicationDetailViewModel(
             initialValue = MedicationDetailState(loading = true, medication = null),
         )
 
+    /**
+     * Changes how loudly this medication asks for attention.
+     *
+     * Tier and critical are deliberately separate: tier is how the alert
+     * *arrives*, critical is how you get *out* of it. Setting a medication to
+     * Off does not make it non-critical, and a quiet medication can still
+     * refuse to be skipped without giving a reason.
+     */
+    fun setAlertSettings(tier: AlertTier, critical: Boolean) {
+        viewModelScope.launch {
+            dao.updateAlertSettings(medicationId, tier, critical)
+            // Switching to Off can remove the very dose the alarm is aimed at.
+            alarms.rearm("alert-settings")
+        }
+    }
+
     /** Ends every active course today; past days keep their history. */
     fun stopAll() {
-        viewModelScope.launch { dao.stopMedication(medicationId, LocalDate.now()) }
+        viewModelScope.launch {
+            dao.stopMedication(medicationId, LocalDate.now())
+            alarms.rearm("medication-stopped")
+        }
     }
 
     /** Soft-deletes the whole medication, then tells the screen to leave. */
     fun deleteMedication(onDeleted: () -> Unit) {
         viewModelScope.launch {
             dao.deleteMedication(medicationId)
+            alarms.rearm("medication-deleted")
             onDeleted()
         }
     }
@@ -107,7 +132,11 @@ class MedicationDetailViewModel(
 
         fun factory(context: Context, medicationId: Long) = viewModelFactory {
             initializer {
-                MedicationDetailViewModel(ThymeDatabase.get(context).doseDao(), medicationId)
+                MedicationDetailViewModel(
+                    ThymeDatabase.get(context).doseDao(),
+                    AlarmScheduler.get(context),
+                    medicationId,
+                )
             }
         }
     }

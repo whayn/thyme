@@ -144,7 +144,7 @@ object DevSeeder {
                         logs += DoseLog(
                             scheduledDoseId = doseId,
                             forDate = date,
-                            takenAt = date.atTime(loggedTime)
+                            loggedAt = date.atTime(loggedTime)
                                 .atZone(java.time.ZoneId.systemDefault())
                                 .toInstant(),
                         )

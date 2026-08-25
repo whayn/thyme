@@ -6,7 +6,10 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import dev.whayn.thyme.data.DoseDao
+import dev.whayn.thyme.alert.AlarmScheduler
+import dev.whayn.thyme.data.AlertTier
 import dev.whayn.thyme.data.Medication
+import dev.whayn.thyme.data.SettingsRepository
 import dev.whayn.thyme.data.ThymeDatabase
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -31,6 +34,8 @@ data class MedicationMetadataState(
      * moved the right.
      */
     val linkedColors: Boolean = true,
+    val alertTier: AlertTier = AlertTier.LIGHT,
+    val critical: Boolean = false,
     val dirty: Boolean = false,
     val saved: Boolean = false,
 ) {
@@ -40,12 +45,22 @@ data class MedicationMetadataState(
 /** Name, strength, shape, colours, the identity of a medication. */
 class MedicationMetadataViewModel(
     private val dao: DoseDao,
+    private val settings: SettingsRepository,
+    private val alarms: AlarmScheduler,
     private val medicationId: Long?,
 ) : ViewModel() {
     private val _state = MutableStateFlow(MedicationMetadataState(loading = medicationId != null))
     val state: StateFlow<MedicationMetadataState> = _state.asStateFlow()
 
     init {
+        // A brand new medication starts at whatever the user set as their
+        // app-wide default, so someone who wants everything loud says so once.
+        if (medicationId == null) {
+            viewModelScope.launch {
+                val tier = settings.currentAlertSettings().defaultAlertTier
+                _state.update { if (it.dirty) it else it.copy(alertTier = tier) }
+            }
+        }
         if (medicationId != null) {
             viewModelScope.launch {
                 val loaded = dao.getMedication(medicationId)?.medication
@@ -58,6 +73,8 @@ class MedicationMetadataViewModel(
                         colorIndexRight = loaded.colorIndexRight,
                         form = loaded.form,
                         linkedColors = loaded.colorIndex == loaded.colorIndexRight,
+                        alertTier = loaded.alertTier,
+                        critical = loaded.critical,
                     )
                 } else {
                     _state.value.copy(loading = false)
@@ -105,6 +122,14 @@ class MedicationMetadataViewModel(
         _state.update { it.copy(form = form, dirty = true) }
     }
 
+    fun setAlertTier(tier: AlertTier) {
+        _state.update { it.copy(alertTier = tier, dirty = true) }
+    }
+
+    fun setCritical(critical: Boolean) {
+        _state.update { it.copy(critical = critical, dirty = true) }
+    }
+
     /** Inserts or updates, then hands back the id so a new medication can open its detail. */
     fun save(onSaved: (Long) -> Unit) {
         val current = state.value
@@ -117,6 +142,8 @@ class MedicationMetadataViewModel(
             colorIndex = current.colorIndex,
             colorIndexRight = current.colorIndexRight,
             form = current.form,
+            alertTier = current.alertTier,
+            critical = current.critical,
         )
 
         viewModelScope.launch {
@@ -124,6 +151,9 @@ class MedicationMetadataViewModel(
                 if (medication.id == 0L) dao.insertMedication(medication)
                 else medication.id.also { dao.updateMedication(medication) }
             _state.update { it.copy(saved = true, dirty = false) }
+            // A new medication can change what rings next - and switching an
+            // existing one to Off can retire the alarm currently aimed at it.
+            alarms.rearm("medication-saved")
             onSaved(id)
         }
     }
@@ -131,7 +161,12 @@ class MedicationMetadataViewModel(
     companion object {
         fun factory(context: Context, medicationId: Long?) = viewModelFactory {
             initializer {
-                MedicationMetadataViewModel(ThymeDatabase.get(context).doseDao(), medicationId)
+                MedicationMetadataViewModel(
+                    ThymeDatabase.get(context).doseDao(),
+                    SettingsRepository.get(context),
+                    AlarmScheduler.get(context),
+                    medicationId,
+                )
             }
         }
     }

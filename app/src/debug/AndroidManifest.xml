@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Debug-only additions. This manifest is merged into debug builds only, so the
+  exported test receiver below cannot reach a release APK.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <receiver
+            android:name=".alert.AlertDebugReceiver"
+            android:exported="true"
+            android:enabled="true">
+            <intent-filter>
+                <!-- The command surface. See tools/alert. -->
+                <action android:name="dev.whayn.thyme.DEBUG" />
+                <!-- Kept so anything scripted against the original still works. -->
+                <action android:name="dev.whayn.thyme.DEBUG_FIRE" />
+            </intent-filter>
+        </receiver>
+
+        <!--
+          The alert-screen gallery. Exported so `tools/alert screens` can start
+          it directly; debug-only, so it cannot be exported anywhere real.
+        -->
+        <activity
+            android:name=".ui.alert.AlertGalleryActivity"
+            android:exported="true"
+            android:label="Thyme alert states"
+            android:theme="@style/Theme.Thyme" />
+    </application>
+</manifest>

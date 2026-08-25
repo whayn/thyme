@@ -1,5 +1,6 @@
 package dev.whayn.thyme.data
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
@@ -15,4 +16,11 @@ data class Medication(
     // Index into MedicationForms.entries how the drug is taken (tablet, cream…).
     val form: Int = 0,
     val active: Boolean = true,
+    // How loudly this asks for attention.
+    @ColumnInfo(defaultValue = "LIGHT")
+    val alertTier: AlertTier = AlertTier.LIGHT,
+    // Orthogonal to alertTier: critical doses cannot be skipped without giving a
+    // reason. A quiet medication can still be critical, and a loud one need not be.
+    @ColumnInfo(defaultValue = "0")
+    val critical: Boolean = false,
 )

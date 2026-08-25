@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import dev.whayn.thyme.alert.AlarmScheduler
 import dev.whayn.thyme.data.DoseDao
 import dev.whayn.thyme.data.DoseTime
 import dev.whayn.thyme.data.Recurrence
@@ -76,6 +77,7 @@ data class CourseEditorState(
  */
 class CourseEditorViewModel(
     private val dao: DoseDao,
+    private val alarms: AlarmScheduler,
     private val medicationId: Long,
     private val regimenId: Long?,
 ) : ViewModel() {
@@ -176,6 +178,7 @@ class CourseEditorViewModel(
         }
         viewModelScope.launch {
             dao.saveRegimen(current.regimen.copy(medicationId = medicationId), times)
+            alarms.rearm("regimen-saved")
             _state.update { it.copy(saved = true, dirty = false) }
             onSaved()
         }
@@ -186,6 +189,7 @@ class CourseEditorViewModel(
         val id = regimenId ?: return
         viewModelScope.launch {
             dao.stopRegimen(id, LocalDate.now())
+            alarms.rearm("regimen-stopped")
             onStopped()
         }
     }
@@ -195,6 +199,7 @@ class CourseEditorViewModel(
         val id = regimenId ?: return
         viewModelScope.launch {
             dao.deleteRegimen(id)
+            alarms.rearm("regimen-deleted")
             onDeleted()
         }
     }
@@ -211,6 +216,7 @@ class CourseEditorViewModel(
             initializer {
                 CourseEditorViewModel(
                     dao = ThymeDatabase.get(context).doseDao(),
+                    alarms = AlarmScheduler.get(context),
                     medicationId = medicationId,
                     regimenId = regimenId,
                 )

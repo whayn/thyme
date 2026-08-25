@@ -5,8 +5,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import dev.whayn.thyme.alert.AlarmScheduler
 import dev.whayn.thyme.data.DoseDao
-import dev.whayn.thyme.data.DoseLog
+import dev.whayn.thyme.data.DoseOutcome
 import dev.whayn.thyme.data.ThymeDatabase
 import dev.whayn.thyme.data.TodayDose
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -30,6 +31,7 @@ data class DoseListState(
 
 class DoseListViewModel(
     private val dao: DoseDao,
+    private val alarms: AlarmScheduler,
     initialDate: LocalDate? = null,
 ) : ViewModel() {
 
@@ -81,27 +83,40 @@ class DoseListViewModel(
         _pinnedDate.value = if (date == _today.value) null else date
     }
 
+    /**
+     * Ticking a row on Today means "taken", and untitcking clears whatever was
+     * there - a take *or* a skip - back to pending.
+     *
+     * Branching on `resolved` rather than `taken` is load-bearing: a skipped dose
+     * has `taken == false` but already owns a row, so the old insert path would
+     * hit the unique index on (scheduledDoseId, forDate) and throw. Skips can
+     * only be *created* from the alert screen, where they cost some friction;
+     * here they can only be cleared.
+     */
     fun toggle(item: TodayDose) {
         val day = currentDate()
         viewModelScope.launch {
-            if (item.taken) {
+            if (item.resolved) {
                 dao.deleteLog(item.scheduled.id, day)
             } else {
-                dao.insertLog(
-                    DoseLog(
-                        scheduledDoseId = item.scheduled.id,
-                        forDate = day,
-                        takenAt = Instant.now(),
-                    )
+                dao.resolveDose(
+                    scheduledDoseId = item.scheduled.id,
+                    forDate = day,
+                    outcome = DoseOutcome.TAKEN,
                 )
             }
+            alarms.rearm("dose-toggled")
         }
     }
 
     companion object {
         fun factory(context: Context, initialDate: LocalDate? = null) = viewModelFactory {
             initializer {
-                DoseListViewModel(ThymeDatabase.get(context).doseDao(), initialDate)
+                DoseListViewModel(
+                    ThymeDatabase.get(context).doseDao(),
+                    AlarmScheduler.get(context),
+                    initialDate,
+                )
             }
         }
     }

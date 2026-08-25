@@ -24,7 +24,10 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -47,6 +50,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import dev.whayn.thyme.MedicationDetailState
 import dev.whayn.thyme.MedicationHistory
+import dev.whayn.thyme.data.AlertTier
 import dev.whayn.thyme.data.MedicationWithRegimens
 import dev.whayn.thyme.ui.theme.MedicationForms
 import dev.whayn.thyme.ui.theme.ThymeDimens
@@ -63,6 +67,7 @@ fun MedicationDetailScreen(
     onEditCourse: (regimenId: Long) -> Unit,
     onStopAll: () -> Unit,
     onDeleteMedication: () -> Unit,
+    onAlertSettingsChange: (AlertTier, Boolean) -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -229,6 +234,15 @@ fun MedicationDetailScreen(
                 }
             }
 
+            item(key = "reminders") {
+                Spacer(Modifier.height(28.dp))
+                RemindersCard(
+                    tier = medication.medication.alertTier,
+                    critical = medication.medication.critical,
+                    onChange = onAlertSettingsChange,
+                )
+            }
+
             item(key = "manage") {
                 Spacer(Modifier.height(28.dp))
                 ManageCard(
@@ -239,6 +253,62 @@ fun MedicationDetailScreen(
             }
 
             item(key = "tail") { Spacer(Modifier.height(32.dp)) }
+        }
+    }
+}
+
+/**
+ * How this medication asks for attention.
+ *
+ * Chips in a FlowRow rather than a segmented row: four options do not fit on one
+ * line on a narrow screen, and a SingleChoiceSegmentedButtonRow does not wrap -
+ * chunking it renders as several disconnected toggles with the wrong rounding.
+ *
+ * The description line under the chips is the point of the card. "Strong" means
+ * nothing on its own; "a real alarm, and it keeps ringing" is a decision someone
+ * can actually make.
+ */
+@Composable
+private fun RemindersCard(
+    tier: AlertTier,
+    critical: Boolean,
+    onChange: (AlertTier, Boolean) -> Unit,
+) {
+    SectionCard("Reminders") {
+        Text("Alert level", style = MaterialTheme.typography.bodyLarge)
+        Spacer(Modifier.height(10.dp))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            AlertTier.entries.forEach { entry ->
+                FilterChip(
+                    selected = tier == entry,
+                    onClick = { onChange(entry, critical) },
+                    label = { Text(entry.label) },
+                )
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        Text(
+            tier.description,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        Spacer(Modifier.height(20.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Critical", style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    if (critical) "Skipping asks why, and records the reason"
+                    else "Can be skipped with one tap",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(checked = critical, onCheckedChange = { onChange(tier, it) })
         }
     }
 }

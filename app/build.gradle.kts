@@ -12,6 +12,12 @@ android {
         version = release(37)
     }
 
+    // MigrationTestHelper reads the exported schemas from the test APK's assets,
+    // not from the build directory, so they have to be packaged in.
+    sourceSets {
+        getByName("androidTest").assets.srcDirs("$projectDir/schemas")
+    }
+
     defaultConfig {
         applicationId = "dev.whayn.thyme"
         minSdk = 26
@@ -39,6 +45,27 @@ android {
     }
 }
 
+// room-testing parses schema bundles with kotlinx-serialization and is built
+// against 1.8.x, but a transitive `strictly 1.7.3` constraint drags the runtime
+// back to 1.7.3 - and its generated serializers then hit AbstractMethodError on
+// GeneratedSerializer.typeParametersSerializers(). `force` is what overrides a
+// `strictly`. It has to be applied app-wide, not just to the test configuration:
+// an instrumentation test shares the app's classloader, so the app APK's copy of
+// the classes wins and a test-only bump is invisible at runtime.
+configurations.configureEach {
+    resolutionStrategy {
+        force("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
+        force("org.jetbrains.kotlinx:kotlinx-serialization-core:1.8.1")
+    }
+}
+
+// Room writes the schema JSON here on every build. MigrationTestHelper reads it
+// to stand up an old database, so migrations can be tested before they ever meet
+// real data - and a botched dose_logs rebuild has no undo.
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
+}
+
 dependencies {
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
@@ -53,6 +80,7 @@ dependencies {
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(libs.androidx.junit)
+    androidTestImplementation(libs.androidx.room.testing)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     debugImplementation(libs.androidx.compose.ui.tooling)
     implementation(libs.androidx.room.runtime)

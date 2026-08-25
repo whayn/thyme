@@ -2,4 +2,17 @@
 <resources>
 
     <style name="Theme.Thyme" parent="android:Theme.Material.Light.NoActionBar" />
+
+    <!--
+      The alert shows over the lock screen, so it gets its own theme with no
+      action bar and a painted background. Without the background there is a
+      white flash between the window opening and Compose drawing, which on a
+      dark lock screen at 3am is genuinely unpleasant.
+    -->
+    <style name="Theme.Thyme.Alert" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/alert_window_background</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowShowWallpaper">false</item>
+    </style>
 </resources>

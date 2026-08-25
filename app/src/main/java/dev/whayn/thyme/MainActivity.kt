@@ -44,6 +44,9 @@ import androidx.navigation.NavDestination
 import androidx.navigation.NavDestination.Companion.hasRoute
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import dev.whayn.thyme.alert.AlertRingerService
+import dev.whayn.thyme.ui.alert.AlertActivity
+import dev.whayn.thyme.ui.RingingBanner
 import dev.whayn.thyme.ui.nav.Destinations
 import dev.whayn.thyme.ui.nav.ThymeNavHost
 import dev.whayn.thyme.ui.theme.ThymeTheme
@@ -88,7 +91,8 @@ private fun ThymeApp() {
         val isFullScreen =
             destination?.hasRoute(Destinations.MedicationDetail::class) == true ||
                     destination?.hasRoute(Destinations.CourseEditor::class) == true ||
-                    destination?.hasRoute(Destinations.MedicationMetadata::class) == true
+                    destination?.hasRoute(Destinations.MedicationMetadata::class) == true ||
+                    destination?.hasRoute(Destinations.AlertSetup::class) == true
         val bottomDestinations = listOf(
             BottomDestination("Today", Icons.Filled.Home, Destinations.Today) {
                 it?.hasRoute(Destinations.Today::class) == true
@@ -127,6 +131,26 @@ private fun ThymeApp() {
                 .fillMaxSize()
                 .nestedScroll(fabScrollConnection),
             containerColor = MaterialTheme.colorScheme.background,
+            // Sits above every tab rather than only Today: whichever screen you
+            // happened to open, a ringing alarm needs a way out from here.
+            topBar = {
+                val ringing = AlertRingerService.ringing.collectAsStateWithLifecycle().value
+                val bannerContext = LocalContext.current
+                RingingBanner(
+                    alert = ringing,
+                    onOpen = {
+                        ringing?.let {
+                            bannerContext.startActivity(
+                                AlertActivity.intent(
+                                    bannerContext, it.groupKey, it.doseIds,
+                                    it.forDate, it.tier, it.critical,
+                                )
+                            )
+                        }
+                    },
+                    onSilence = { AlertRingerService.stop(bannerContext) },
+                )
+            },
             bottomBar = {
                 if (!isFullScreen) NavigationBar {
                     bottomDestinations.forEach { item ->

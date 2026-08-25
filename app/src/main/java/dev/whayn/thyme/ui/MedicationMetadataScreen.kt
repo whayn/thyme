@@ -32,8 +32,11 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -60,6 +63,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.whayn.thyme.MedicationMetadataState
+import dev.whayn.thyme.data.AlertTier
 import dev.whayn.thyme.MedicationMetadataViewModel
 import dev.whayn.thyme.ui.theme.MedicationColorNames
 import dev.whayn.thyme.ui.theme.MedicationForms
@@ -68,7 +72,7 @@ import dev.whayn.thyme.ui.theme.ThymeDimens
 import dev.whayn.thyme.ui.theme.ThymeTheme
 import dev.whayn.thyme.ui.theme.rememberReducedMotion
 
-private const val STEP_COUNT = 3
+private const val STEP_COUNT = 4
 
 /**
  * Multi-step medication identity customization:
@@ -85,6 +89,7 @@ private const val STEP_COUNT = 3
 fun MedicationMetadataScreen(
     medicationId: Long?,
     onSaved: (Long) -> Unit,
+    onTestAlert: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -128,7 +133,8 @@ fun MedicationMetadataScreen(
     val titleText = when (step) {
         0 -> if (isEditing) "Edit medication" else "Add medication"
         1 -> "Choose shape"
-        else -> "Choose colours"
+        2 -> "Choose colours"
+        else -> "How it alerts you"
     }
 
     Scaffold(
@@ -199,15 +205,107 @@ fun MedicationMetadataScreen(
 
                 1 -> ShapeStep(state = state, onSelectForm = viewModel::setForm)
 
-                else -> ColorsStep(
+                2 -> ColorsStep(
                     state = state,
                     onSelectLeftColor = viewModel::setColor,
                     onSelectRightColor = viewModel::setColorRight,
                     onLinkedChange = viewModel::setLinkedColors,
                 )
+
+                else -> AlertStep(
+                    state = state,
+                    onSelectTier = viewModel::setAlertTier,
+                    onCriticalChange = viewModel::setCritical,
+                    onTestAlert = onTestAlert,
+                )
             }
             Spacer(Modifier.height(24.dp))
         }
+    }
+}
+
+/**
+ * How loudly this medication asks for attention, and whether it can be waved
+ * away.
+ *
+ * A whole step rather than a chip row on the details page: this is the most
+ * consequential choice in the app, and each level needs a sentence saying what
+ * it actually does. "Strong" means nothing on its own.
+ */
+@Composable
+private fun AlertStep(
+    state: MedicationMetadataState,
+    onSelectTier: (AlertTier) -> Unit,
+    onCriticalChange: (Boolean) -> Unit,
+    onTestAlert: () -> Unit,
+) {
+    EditorCard("Alert level") {
+      Column {
+        AlertTier.entries.forEach { tier ->
+            val selected = state.alertTier == tier
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp)
+                    .clip(MaterialTheme.shapes.small)
+                    .selectable(
+                        selected = selected,
+                        onClick = { onSelectTier(tier) },
+                        role = Role.RadioButton,
+                    ),
+                shape = MaterialTheme.shapes.small,
+                color = if (selected) MaterialTheme.colorScheme.secondaryContainer
+                else MaterialTheme.colorScheme.surfaceContainerHigh,
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    RadioButton(selected = selected, onClick = null)
+                    Column(Modifier.weight(1f)) {
+                        Text(tier.label, style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            tier.description,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(18.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Critical", style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    if (state.critical) "Skipping asks why, and records the reason"
+                    else "Can be skipped with one tap",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(checked = state.critical, onCheckedChange = onCriticalChange)
+        }
+
+        if (state.alertTier != AlertTier.NONE) {
+            Spacer(Modifier.height(18.dp))
+            Text(
+                "Phones can silence apps in ways that only show up when it matters.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(10.dp))
+            OutlinedButton(onClick = onTestAlert) { Text("Test this alert") }
+        }
+      }
     }
 }
 
@@ -303,7 +401,7 @@ private fun DetailsStep(
     }
 }
 
-/** The card every step's controls sit in, so the three steps share one container. */
+/** The card every step's controls sit in, so the four steps share one container. */
 @Composable
 private fun EditorCard(title: String, content: @Composable () -> Unit) {
     Card(
