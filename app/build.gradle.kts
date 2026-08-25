@@ -16,16 +16,32 @@ android {
         applicationId = "dev.whayn.thyme"
         minSdk = 26
         targetSdk = 37
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = providers.gradleProperty("app.versionCode").orNull?.toInt() ?: 1
+        versionName = providers.gradleProperty("app.versionName").orNull ?: "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    val ciStorePath = providers.environmentVariable("RELEASE_KEYSTORE_PATH").orNull
+
+    if (ciStorePath != null) {
+        signingConfigs {
+            create("ci") {
+                storeFile = file(ciStorePath)
+                storePassword = providers.environmentVariable("RELEASE_KEYSTORE_PASSWORD").get()
+                keyAlias = providers.environmentVariable("RELEASE_KEY_ALIAS").get()
+                keyPassword = providers.environmentVariable("RELEASE_KEY_PASSWORD").get()
+            }
+        }
     }
 
     buildTypes {
         release {
             optimization {
                 enable = false
+            }
+            if (ciStorePath != null) {
+                signingConfig = signingConfigs.getByName("ci")
             }
         }
     }
