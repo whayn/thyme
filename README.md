@@ -1,5 +1,5 @@
 <p align="center">
-  <img src=".github/assets/thyme-banner.png" alt="Thyme banner" width="100%" />
+  <img src=".github/assets/thyme-banner-github.png" alt="Thyme banner" width="100%" />
 </p>
 
 # Thyme
