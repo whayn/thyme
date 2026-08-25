@@ -4,7 +4,7 @@
 
 # Thyme
 
-*yes i have no icon yet :(*
+*yes it has no icon yet :(*
 
 > [!WARNING]
 > Thyme is a work in progress. Things may change or break !!!
@@ -18,6 +18,44 @@
 </a>
 
 Or get the latest APK in the [Releases](https://github.com/whayn/thyme/releases) page.
+
+## Features
+
+- **A day at a glance** — today's doses laid out morning to night, with a week strip to flip through days. One tap logs a dose; your history is a real event log, not a checkbox.
+- **Flexible schedules** — specific weekdays, every-N-days intervals, on/off cycles (think 21-on/7-off), and multiple concurrent courses per medication for tapers.
+- **Nights belong to tomorrow** — the day rolls over at 05:00, so a 02:00 dose shows up as tonight's last item, not yesterday's.
+- **Adherence stats** — per-medication adherence and a month calendar of how things actually went.
+- **Graceful endings** — stopping a course keeps its history; deleting never orphans your logs.
+- **Looks like home** — Material 3 with dynamic color, light and dark.
+- **Private by construction** — no accounts, no analytics, and the app requests *zero* permissions. There is no internet permission, so your data physically cannot leave the device.
+
+## Build
+
+You'll need [Android Studio](https://developer.android.com/studio) (or a JDK 21 + Android SDK setup) and Git.
+
+```bash
+git clone https://github.com/whayn/thyme.git
+cd thyme
+./gradlew installDebug   # build and install on a connected device/emulator
+```
+
+Other useful tasks:
+
+```bash
+./gradlew test     # unit tests
+./gradlew lint     # Android lint
+```
+
+Tip: if Gradle claims everything is up-to-date right after a source edit, add `--rerun-tasks` — KSP sometimes skips regeneration otherwise, and Room's query checks only surface as warnings.
+
+Minimum supported Android version is 8.0 (API 26).
+
+## Roadmap
+
+- [ ] An actual app icon
+- [ ] Dose reminders with escalation and skip reasons *(in development, on [`feature/alerts`](https://github.com/whayn/thyme/tree/feature/alerts))*
+- [ ] Distribution via F-Droid / IzzyOnDroid
+- [ ] Data export and backup
 
 ## License
 
