@@ -4,6 +4,8 @@
 
 # Thyme
 
+*yes i have no icon yet :(*
+
 > [!WARNING]
 > Thyme is a work in progress. Things may change or break !!!
 
@@ -15,6 +17,8 @@
     height="80">
 </a>
 
-Or grab the latest APK directly from the [Releases](https://github.com/whayn/thyme/releases) page.
+Or get the latest APK in the [Releases](https://github.com/whayn/thyme/releases) page.
 
-##  
+## License
+
+[GPL-2.0](LICENSE)
