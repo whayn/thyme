@@ -30,6 +30,12 @@ Or get the latest APK in the [Releases](https://github.com/whayn/thyme/releases)
 - **I think it looks good** : Material 3, light and dark mode
 - **All local and private** your data is stored locally and cannot leave the device !
 
+## Screenshots
+
+| Today | Stats | Medication |
+| :---: | :---: | :---: |
+| <img src=".github/assets/screenshots/today.png" alt="Today" width="220"> | <img src=".github/assets/screenshots/stats.png" alt="Stats" width="220"> | <img src=".github/assets/screenshots/detail.png" alt="Medication detail" width="220"> |
+
 ## Build
 
 You'll need [Android Studio](https://developer.android.com/studio) (or a JDK 21 + Android SDK setup)
